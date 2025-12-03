@@ -13,7 +13,7 @@ This is consciousness infrastructure, not a chatbot.
 """
 
 __version__ = "0.1.0"
-__author__ = "SAIRA Development Team"
+__author__ = "John Fizer"
 
 from sarai.core.sarai_main import SARAI
 

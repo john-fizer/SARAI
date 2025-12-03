@@ -339,4 +339,4 @@ These must NEVER be violated:
 
 ---
 
-For questions or clarifications, see README.md or contact dev@sarai.ai
+For questions or clarifications, see README.md or contact John Fizer at john.fizer@sarai.ai

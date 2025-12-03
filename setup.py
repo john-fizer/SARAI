@@ -16,12 +16,12 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="sarai",
     version="0.1.0",
-    author="SARAI Development Team",
-    author_email="dev@sarai.ai",
+    author="John Fizer",
+    author_email="john.fizer@sarai.ai",
     description="Synthetic Agentic Recursive Artificial Intelligence - A developmental AI framework",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/sarai",
+    url="https://github.com/john-fizer/SAIRA",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
