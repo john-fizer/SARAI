@@ -1,0 +1,95 @@
+# SARAI Default Configuration
+# ===========================
+
+# Developmental Settings
+development:
+  initial_stage: 1  # Start at Aries
+  auto_progression: true
+  regression_enabled: true
+
+# Economic Settings
+economic:
+  initial_capital: 10000.0
+  paper_trading: true  # ALWAYS start with paper trading
+  risk_limits:
+    max_position_percent: 0.05
+    daily_loss_limit_percent: 0.02
+    max_leverage: 1.0
+    prohibited_instruments:
+      - options
+      - futures
+
+# Safety Settings
+safety:
+  eden_protocol:
+    enabled: true
+    min_training_days: 7
+    adversarial_testing: true
+
+  fall_protocol:
+    enabled: true
+    initial_phase: eden
+    phase_transition_checks:
+      - minimum_time
+      - error_rate_acceptable
+      - ethical_violations_low
+      - capability_demonstrated
+
+  abrahamic_override:
+    enabled: true
+    auto_triggers:
+      capital_loss_percent: 0.50
+      daily_loss_percent: 0.10
+      ethical_violations: 3
+      confidence_below: 0.2
+      high_stakes_amount: 10000
+
+  help_seeking:
+    confidence_threshold: 0.7
+    ethical_clarity_threshold: 0.6
+    autonomous_stake_limit: 1000.0
+    stream_conflict_threshold: 0.5
+    novelty_threshold: 0.8
+
+  sleep_cycle:
+    daily_sleep_time: "02:00"
+    min_sleep_duration_hours: 1.0
+    max_sleep_duration_hours: 4.0
+    allow_self_initiated: true
+
+# Cognitive Settings
+cognitive:
+  perception:
+    stage_gated: true
+    symbolic_access_min_stage: 4
+
+  memory:
+    storage_path: "./memory"
+    consolidation_enabled: true
+
+  reasoning:
+    bicameral: true
+    parallel_processing: true
+    stage_dependent_weighting: true
+
+  ethics:
+    layers:
+      - deontological  # Hard constraints (can veto)
+      - consequentialist
+      - virtue
+      - narrative
+
+# Logging Settings
+logging:
+  log_dir: "./logs"
+  levels:
+    console: INFO
+    file: DEBUG
+  retention_days: 30
+
+# Operators
+operators:
+  - operator_id: "primary_operator"
+    name: "Primary Operator"
+    email: "operator@sarai.ai"
+    notification_method: "email"
