@@ -22,6 +22,12 @@ from sarai.core.memory.architecture import MemoryArchitecture
 from sarai.core.reasoning.bicameral import BicameralEngine
 from sarai.core.ethics.framework import EthicalFramework
 
+# JEPA Integration
+from sarai.core.world_model.jepa import JEPAWorldModel
+from sarai.core.routing.relevance_router import RelevanceRouter
+from sarai.core.commitment.commit_law import CommitLaw
+from sarai.core.review.accountability import ReviewSystem
+
 # Systems
 from sarai.development.controller import DevelopmentalController
 from sarai.economic.interface import EconomicInterface
@@ -117,12 +123,32 @@ class SARAI:
             storage_path=memory_path
         )
 
+        # JEPA World Model
+        self.jepa = JEPAWorldModel(
+            embedding_dim=768,
+            latent_dim=256,
+            logger=self.logger
+        )
+
+        # Relevance Router
+        self.router = RelevanceRouter(
+            current_stage=initial_stage,
+            logger=self.logger,
+            top_k=3
+        )
+
         self.reasoning = BicameralEngine(
             stage=initial_stage,
             logger=self.logger
         )
 
         self.ethics = EthicalFramework(logger=self.logger)
+
+        # Commit Law
+        self.commit_law = CommitLaw(logger=self.logger)
+
+        # Review System
+        self.review = ReviewSystem(logger=self.logger)
 
         # Economic interface
         self.logger.logger.info("Initializing economic interface...")
@@ -148,35 +174,69 @@ class SARAI:
         input: MultiModalInput
     ) -> Dict[str, Any]:
         """
-        Main cognitive cycle: perceive -> reason -> remember.
+        Main cognitive cycle: perceive -> JEPA -> router -> reason -> remember.
+
+        Enhanced flow with JEPA and Router:
+        1. Perception encodes input
+        2. JEPA updates world state and predicts
+        3. Router allocates attention to relevant archetypes
+        4. Bicameral reasoning with archetype-weighted streams
+        5. Memory storage
 
         Args:
             input: Multi-modal input
 
         Returns:
-            Reasoning output and perception
+            Complete cognitive state
         """
         # Check if override active
         if self.abrahamic_override.is_active():
             raise RuntimeError("Abrahamic Override is active - no processing allowed")
 
-        # Perceive
+        # 1. Perceive
         perceived_state = self.perception.perceive(input)
+
+        # 2. Update JEPA world model
+        if perceived_state.encoded_text is not None:
+            world_state = self.jepa.update(
+                perceived_state.encoded_text,
+                metadata={"input": input}
+            )
+            state_features = self.jepa.get_state_features()
+        else:
+            world_state = None
+            state_features = None
+
+        # 3. Activate relevant archetypes via router
+        if state_features:
+            activation = self.router.activate(
+                state_features=state_features,
+                memory_signals={}  # TODO: Add memory success/failure signals
+            )
+        else:
+            activation = None
 
         # Store perception as experience
         experience = Experience(
             content=input,
-            context={"perceived_state": perceived_state},
+            context={
+                "perceived_state": perceived_state,
+                "world_state": world_state.to_dict() if world_state else None,
+                "active_archetypes": activation.active_modules if activation else []
+            },
             timestamp=datetime.now(),
             importance=0.5
         )
         await self.memory.store(experience)
 
-        # Reason through bicameral engine
+        # 4. Reason through bicameral engine
+        # TODO: Weight streams by archetype activations
         reasoning = await self.reasoning.reason(perceived_state)
 
         return {
             "perception": perceived_state,
+            "world_state": world_state,
+            "activation": activation,
             "reasoning": reasoning
         }
 
@@ -330,7 +390,12 @@ class SARAI:
         """Update all modules with new stage."""
         stage = self.development.current_stage
         self.perception.update_stage(stage)
+        self.router.update_stage(stage)
         self.reasoning.update_stage(stage)
+
+        self.logger.logger.info(
+            f"All modules updated to stage {stage}"
+        )
 
     def _get_system_state(self) -> Dict[str, Any]:
         """Get current system state."""
@@ -386,6 +451,10 @@ class SARAI:
             "in_eden": self.in_eden,
             "development": self.development.get_status(),
             "economics": self.economics.get_status(),
+            "jepa": self.jepa.get_stats(),
+            "router": self.router.get_stats(),
+            "commit_law": self.commit_law.get_stats(),
+            "review": self.review.get_stats(),
             "safety": {
                 "abrahamic_override": self.abrahamic_override.get_status(),
                 "fall_protocol": self.fall_protocol.get_status(),
