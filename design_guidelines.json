@@ -1,0 +1,98 @@
+{
+  "theme": "Dark",
+  "archetype": "Archetype 7: Electric & Neon",
+  "domain": "Immersive Dashboard / AI App",
+  "typography": {
+    "font_families": {
+      "heading": "Unbounded, sans-serif",
+      "body": "JetBrains Mono, monospace",
+      "accent": "Orbitron, sans-serif"
+    },
+    "rules": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter font-black uppercase text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-600",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-bold text-cyan-50",
+      "h3": "text-xl sm:text-2xl font-semibold text-cyan-100",
+      "body": "text-base leading-relaxed text-slate-300",
+      "overline": "text-xs tracking-[0.2em] uppercase text-cyan-400 font-bold",
+      "interactive": "text-sm font-medium hover:text-cyan-300 transition-colors"
+    },
+    "install_instructions": "Add Google Fonts for Unbounded, JetBrains Mono, and Orbitron."
+  },
+  "colors": {
+    "background": {
+      "primary": "#030305",
+      "secondary": "#0A0A0F",
+      "tertiary": "#12121A"
+    },
+    "surface": {
+      "glass": "bg-black/60 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)]",
+      "solid": "bg-slate-950 border border-cyan-900/50",
+      "highlight": "bg-cyan-950/30"
+    },
+    "accent": {
+      "primary": "#06B6D4",
+      "secondary": "#3B82F6",
+      "tertiary": "#8B5CF6",
+      "neon_glow": "drop-shadow-[0_0_8px_rgba(6,182,212,0.6)]"
+    },
+    "text": {
+      "primary": "#F8FAFC",
+      "secondary": "#CBD5E1",
+      "muted": "#64748B",
+      "inverse": "#030305"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "The 'Control Room' Grid - High density, functional beauty, glowing borders.",
+    "container": "w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8",
+    "bento_grid": "grid grid-cols-1 md:grid-cols-12 gap-6",
+    "padding_scale": "p-6 lg:p-8 for main panels, generous spacing to let glowing elements breathe.",
+    "alignment": "Optical alignment. Left-align data and text. Center-align main immersive 3D scenes."
+  },
+  "surfaces_and_components": {
+    "panels": "Crystal Glassmorphism with 1px inner stroke (border-white/10). High backdrop-blur (backdrop-blur-2xl).",
+    "borders": "Use 'The Tracing Beam' concept for active agents - animate a glowing border around active panels.",
+    "buttons": "Retro-futuristic tactile buttons. Dark background, neon cyan border, hover state triggers a glow and background fill.",
+    "cards": "Flat background (bg-slate-900/50), 1px subtle border, hover state adds a cyan shadow-lg and translates Y by -2px."
+  },
+  "motion_and_interactions": {
+    "hover_states": "All interactive elements must change background and text color, plus add a subtle neon drop-shadow.",
+    "transitions": "Use specific properties: transition-all duration-300 ease-in-out.",
+    "parallax": "Implement a slow-moving parallax starfield background behind all glass panels.",
+    "synapse_firing": "Use Framer Motion to animate glowing paths between neural nodes in the workspace.",
+    "loading": "ASCII art or rotating concentric circular loader mimicking an Arc Reactor."
+  },
+  "media": {
+    "images": [
+      {
+        "category": "background",
+        "url": "https://static.prod-images.emergentagent.com/jobs/e495dd4d-f780-4fc9-9afc-cabaabcdc253/images/177d15b7ed6d9780ae06a3d609ff613559394776c4ac20dd03dbca68bb8e8806.png",
+        "description": "Deep space starfield for parallax background"
+      },
+      {
+        "category": "texture",
+        "url": "https://static.prod-images.emergentagent.com/jobs/e495dd4d-f780-4fc9-9afc-cabaabcdc253/images/a8e19b3ff4e9b960b67741134180fcbe605d2064074c93c729adef2be77143fd.png",
+        "description": "Abstract holographic neural texture for glowing panels or empty states"
+      }
+    ],
+    "icons": {
+      "library": "lucide-react",
+      "style": "Use stroke-width 1.5, color with cyan or slate-400 depending on active state."
+    }
+  },
+  "advanced_visuals": {
+    "neural_network": "Use React Force Graph 3D, visx, or D3.js. Nodes must be glowing orbs (holographic styling). Links must have particle animations traveling along them (synapse firing).",
+    "particles": "Use TSParticles for ambient floating dust/stars in the background if not using an image.",
+    "agent_chamber": "Visualized as glowing 'server racks' or concentric rings that pulse when an agent is 'thinking'."
+  },
+  "instructions_to_main_agent": [
+    "Build a full-screen layout (h-screen w-screen overflow-hidden) to mimic an OS/Dashboard interface.",
+    "Implement the Parallax Space Background using TSParticles or CSS fixed background with the provided space starfield image.",
+    "The Main Workspace is a center stage containing the neural network.",
+    "Surround the workspace with Glassmorphic panels (bg-black/60 backdrop-blur-xl border border-white/10).",
+    "Agent Chamber should be a sidebar or floating panel indicating AI states with glowing dots.",
+    "Thought Input Panel should be a sleek command-line style input at the bottom center.",
+    "Ensure all fonts use Unbounded for headers and JetBrains Mono for data/body.",
+    "All interactive and key informational elements MUST include a data-testid attribute."
+  ]
+}
