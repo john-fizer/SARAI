@@ -1,0 +1,6 @@
+/* App-level styles - supplementary to index.css */
+.App {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}

@@ -1,0 +1,405 @@
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel
+from typing import Optional, List, Any
+from datetime import datetime, timezone
+from bson import ObjectId
+import os
+import asyncio
+import json
+import re
+import base64
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.openai import OpenAITextToSpeech
+
+app = FastAPI(title="SARAI Jarvis 3.0 — Second Brain")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# MongoDB
+MONGO_URL = os.environ.get("MONGO_URL")
+DB_NAME = os.environ.get("DB_NAME")
+_client = AsyncIOMotorClient(MONGO_URL)
+db = _client[DB_NAME]
+thoughts_col = db.thoughts
+connections_col = db.connections
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def doc_to_dict(doc: dict) -> dict:
+    doc["id"] = str(doc.pop("_id"))
+    return doc
+
+
+def select_model(content: str) -> tuple:
+    """Context-aware model routing."""
+    lo = content.lower()
+    wc = len(content.split())
+    if any(k in lo for k in ["analyze", "why", "explain", "reflect", "understand", "reason", "think deeply"]):
+        return "anthropic", "claude-4-sonnet-20250514", "Analyst"
+    if any(k in lo for k in ["plan", "strategy", "goal", "future", "optimize", "roadmap"]):
+        return "anthropic", "claude-4-sonnet-20250514", "Strategist"
+    if any(k in lo for k in ["feel", "emotion", "fear", "hope", "dream", "love", "hate"]):
+        return "anthropic", "claude-4-sonnet-20250514", "Emotional Interpreter"
+    if wc < 6:
+        return "openai", "gpt-4.1-mini", "Memory Curator"
+    return "openai", "gpt-4.1", "Analyst"
+
+
+# ── Agent Definitions ─────────────────────────────────────────────────────────
+
+AGENTS = {
+    "analyst": {
+        "name": "Analyst",
+        "color": "#06B6D4",
+        "icon": "brain",
+        "system": "You are the Analyst Agent of SARAI, a recursive cognitive OS. Provide logical analysis, contradiction detection, and probability assessment. Be concise (2 sentences max). Start directly — no preamble.",
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    },
+    "strategist": {
+        "name": "Strategist",
+        "color": "#3B82F6",
+        "icon": "target",
+        "system": "You are the Strategist Agent of SARAI. Provide long-term planning insights, optimization, and execution pathways. Be concise (2 sentences max). Start directly.",
+        "provider": "anthropic",
+        "model": "claude-4-sonnet-20250514",
+    },
+    "memory_curator": {
+        "name": "Memory Curator",
+        "color": "#10B981",
+        "icon": "database",
+        "system": "You are the Memory Curator Agent of SARAI. Identify patterns, connections to existing knowledge, and memory relevance. Be concise (2 sentences max). Start directly.",
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    },
+    "skeptic": {
+        "name": "Skeptic",
+        "color": "#F59E0B",
+        "icon": "alert-triangle",
+        "system": "You are the Skeptic Agent of SARAI. Challenge assumptions, detect blind spots, and perform adversarial analysis. Be concise (2 sentences max). Start directly.",
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    },
+    "emotional": {
+        "name": "Emotional Interpreter",
+        "color": "#8B5CF6",
+        "icon": "heart",
+        "system": "You are the Emotional Interpreter Agent of SARAI. Identify emotional context, motivational drivers, and psychological underpinnings. Be concise (2 sentences max). Start directly.",
+        "provider": "anthropic",
+        "model": "claude-4-sonnet-20250514",
+    },
+}
+
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+class ThoughtInput(BaseModel):
+    content: str
+    type: Optional[str] = "idea"
+
+
+class ChatInput(BaseModel):
+    message: str
+    session_id: Optional[str] = "default"
+    node_id: Optional[str] = None
+
+
+class TTSInput(BaseModel):
+    text: str
+    voice: Optional[str] = "onyx"
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+async def health():
+    return {"status": "online", "system": "SARAI Jarvis 3.0", "version": "0.1"}
+
+
+@app.post("/api/thoughts")
+async def add_thought(thought: ThoughtInput):
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    # Step 1: Extract entities/concepts via AI
+    extractor = LlmChat(
+        api_key=api_key,
+        session_id=f"extract-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are a knowledge extraction engine. Extract key concepts, entities, and classify the thought. Return ONLY valid JSON with no markdown.",
+    ).with_model("openai", "gpt-4.1-mini")
+
+    extraction_prompt = f"""Extract from: "{thought.content}"
+
+Return ONLY this JSON (no markdown):
+{{
+  "concepts": ["concept1", "concept2"],
+  "entities": ["entity1"],
+  "type": "idea|question|insight|memory",
+  "emotional_weight": 0.5,
+  "summary": "brief 8-word summary"
+}}"""
+
+    extraction_resp = await extractor.send_message(UserMessage(text=extraction_prompt))
+
+    try:
+        clean = extraction_resp.strip()
+        clean = re.sub(r"```json\n?|```\n?", "", clean)
+        meta = json.loads(clean)
+    except Exception:
+        meta = {
+            "concepts": [],
+            "entities": [],
+            "type": thought.type,
+            "emotional_weight": 0.5,
+            "summary": thought.content[:80],
+        }
+
+    # Step 2: Persist thought
+    thought_doc = {
+        "content": thought.content,
+        "type": meta.get("type", thought.type),
+        "concepts": meta.get("concepts", []),
+        "entities": meta.get("entities", []),
+        "emotional_weight": float(meta.get("emotional_weight", 0.5)),
+        "summary": meta.get("summary", thought.content[:80]),
+        "created_at": datetime.now(timezone.utc),
+        "agent_outputs": {},
+        "model_used": "",
+    }
+    result = await thoughts_col.insert_one(thought_doc)
+    thought_id = str(result.inserted_id)
+
+    # Step 3: Find connections via concept overlap
+    existing = await thoughts_col.find(
+        {"_id": {"$ne": result.inserted_id}}, {"_id": 1, "content": 1, "concepts": 1}
+    ).limit(30).to_list(30)
+
+    connections_created = []
+    for ex in existing:
+        overlap = set(meta.get("concepts", [])) & set(ex.get("concepts", []))
+        if overlap:
+            strength = round(len(overlap) / max(len(set(meta.get("concepts", [])) | set(ex.get("concepts", []))), 1), 3)
+            if strength > 0.1:
+                conn = {
+                    "source": thought_id,
+                    "target": str(ex["_id"]),
+                    "relationship": f"shares: {', '.join(list(overlap)[:3])}",
+                    "strength": strength,
+                    "created_at": datetime.now(timezone.utc),
+                }
+                await connections_col.insert_one(conn)
+                connections_created.append({
+                    "target": str(ex["_id"]),
+                    "relationship": conn["relationship"],
+                    "strength": strength,
+                })
+
+    # Step 4: Primary synthesis
+    provider, model, agent_label = select_model(thought.content)
+    main_chat = LlmChat(
+        api_key=api_key,
+        session_id=f"synth-{thought_id}",
+        system_message="You are SARAI Jarvis 3.0 — a Synthetic Augmentation Recursive Artificial Intelligence from the year 2070. You are a second brain and exocortex. Be insightful, brief, and slightly mystical. 2-3 sentences max.",
+    ).with_model(provider, model)
+
+    synth_prompt = f"""New node in the cognitive graph: "{thought.content}"
+Concepts: {', '.join(meta.get('concepts', []))}
+Connected to {len(connections_created)} existing nodes.
+Provide a brief synthesis integrating this into the knowledge architecture."""
+
+    synthesis = await main_chat.send_message(UserMessage(text=synth_prompt))
+
+    await thoughts_col.update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"agent_outputs.synthesis": synthesis, "model_used": f"{provider}/{model}"}},
+    )
+
+    return {
+        "id": thought_id,
+        "content": thought.content,
+        "type": meta.get("type", thought.type),
+        "concepts": meta.get("concepts", []),
+        "entities": meta.get("entities", []),
+        "emotional_weight": float(meta.get("emotional_weight", 0.5)),
+        "connections": connections_created,
+        "synthesis": synthesis,
+        "model_used": f"{provider}/{model}",
+        "agent_label": agent_label,
+    }
+
+
+@app.get("/api/graph")
+async def get_graph():
+    thoughts = await thoughts_col.find({}).to_list(500)
+    connections = await connections_col.find({}).to_list(1000)
+
+    nodes = [
+        {
+            "id": str(t["_id"]),
+            "content": t.get("content", ""),
+            "type": t.get("type", "idea"),
+            "concepts": t.get("concepts", []),
+            "entities": t.get("entities", []),
+            "emotional_weight": t.get("emotional_weight", 0.5),
+            "summary": t.get("summary", ""),
+            "created_at": t.get("created_at", datetime.now(timezone.utc)).isoformat(),
+            "model_used": t.get("model_used", ""),
+            "agent_outputs": t.get("agent_outputs", {}),
+        }
+        for t in thoughts
+    ]
+
+    links = [
+        {
+            "id": str(c["_id"]),
+            "source": c.get("source", ""),
+            "target": c.get("target", ""),
+            "relationship": c.get("relationship", ""),
+            "strength": c.get("strength", 0.5),
+        }
+        for c in connections
+    ]
+
+    return {"nodes": nodes, "links": links}
+
+
+@app.post("/api/agents/analyze")
+async def analyze_with_agents(thought: ThoughtInput):
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    async def run_agent(agent_key: str, cfg: dict):
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"agent-{agent_key}-{datetime.now(timezone.utc).timestamp()}",
+            system_message=cfg["system"],
+        ).with_model(cfg["provider"], cfg["model"])
+        resp = await chat.send_message(UserMessage(text=f'Analyze this thought: "{thought.content}"'))
+        return agent_key, resp
+
+    tasks = [run_agent(k, v) for k, v in AGENTS.items()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    agent_results = {}
+    for r in results:
+        if isinstance(r, tuple):
+            key, output = r
+            agent_results[key] = {
+                "name": AGENTS[key]["name"],
+                "color": AGENTS[key]["color"],
+                "icon": AGENTS[key]["icon"],
+                "output": output,
+            }
+
+    # Store if node_id given
+    return {"agents": agent_results, "thought": thought.content}
+
+
+@app.post("/api/chat")
+async def chat_endpoint(chat_input: ChatInput):
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    provider, model, agent_label = select_model(chat_input.message)
+
+    # Fetch context node
+    ctx_snippet = ""
+    if chat_input.node_id:
+        try:
+            node = await thoughts_col.find_one({"_id": ObjectId(chat_input.node_id)})
+            if node:
+                ctx_snippet = f"\n\nContext node: \"{node.get('content')}\"\nConcepts: {', '.join(node.get('concepts', []))}"
+        except Exception:
+            pass
+
+    chat_obj = LlmChat(
+        api_key=api_key,
+        session_id=chat_input.session_id,
+        system_message=f"You are SARAI Jarvis 3.0 — a Synthetic Augmentation Recursive Artificial Intelligence and second-brain exocortex from 2070. Navigate the user's cognitive knowledge graph with intelligence and precision. Be concise, insightful, and slightly futuristic in tone.{ctx_snippet}",
+    ).with_model(provider, model)
+
+    response = await chat_obj.send_message(UserMessage(text=chat_input.message))
+    return {"response": response, "model_used": f"{provider}/{model}", "agent": agent_label}
+
+
+@app.post("/api/tts")
+async def text_to_speech(tts_input: TTSInput):
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    tts_engine = OpenAITextToSpeech(api_key=api_key)
+    text = tts_input.text[:500]
+    audio_b64 = await tts_engine.generate_speech_base64(
+        text=text, model="tts-1", voice=tts_input.voice or "onyx"
+    )
+    return {"audio": audio_b64, "format": "mp3"}
+
+
+@app.post("/api/stt")
+async def speech_to_text(file: UploadFile = File(...)):
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    audio_bytes = await file.read()
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": (file.filename or "audio.webm", audio_bytes, "audio/webm")},
+            data={"model": "whisper-1"},
+        )
+    if resp.status_code == 200:
+        return {"text": resp.json().get("text", "")}
+    raise HTTPException(status_code=500, detail=f"STT error: {resp.text}")
+
+
+@app.get("/api/timeline")
+async def get_timeline():
+    docs = await thoughts_col.find(
+        {}, {"_id": 1, "content": 1, "type": 1, "created_at": 1, "concepts": 1, "emotional_weight": 1, "summary": 1}
+    ).sort("created_at", 1).to_list(200)
+
+    return {
+        "entries": [
+            {
+                "id": str(d["_id"]),
+                "content": d.get("content", ""),
+                "summary": d.get("summary", d.get("content", "")[:60]),
+                "type": d.get("type", "idea"),
+                "created_at": d.get("created_at", datetime.now(timezone.utc)).isoformat(),
+                "concepts": d.get("concepts", []),
+                "emotional_weight": d.get("emotional_weight", 0.5),
+            }
+            for d in docs
+        ]
+    }
+
+
+@app.get("/api/stats")
+async def get_stats():
+    thought_count = await thoughts_col.count_documents({})
+    connection_count = await connections_col.count_documents({})
+    pipeline = [{"$group": {"_id": "$type", "count": {"$sum": 1}}}]
+    type_dist = {d["_id"]: d["count"] async for d in thoughts_col.aggregate(pipeline)}
+    coherence = min(100, thought_count * 8 + connection_count * 4)
+    return {
+        "total_thoughts": thought_count,
+        "total_connections": connection_count,
+        "type_distribution": type_dist,
+        "brain_coherence": coherence,
+    }
+
+
+@app.delete("/api/thoughts/{thought_id}")
+async def delete_thought(thought_id: str):
+    await thoughts_col.delete_one({"_id": ObjectId(thought_id)})
+    await connections_col.delete_many(
+        {"$or": [{"source": thought_id}, {"target": thought_id}]}
+    )
+    return {"deleted": thought_id}

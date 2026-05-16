@@ -1,0 +1,244 @@
+import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, Zap, Brain, MessageSquare, Trash2, Link2 } from "lucide-react";
+
+const BACKEND = process.env.REACT_APP_BACKEND_URL;
+
+const TYPE_COLORS = {
+  idea: "#06B6D4",
+  question: "#8B5CF6",
+  insight: "#F59E0B",
+  memory: "#10B981",
+};
+
+const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks }) => {
+  const [chatMsg, setChatMsg] = useState("");
+  const [chatHistory, setChatHistory] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [sessionId] = useState(`node-chat-${node.id}`);
+
+  const color = TYPE_COLORS[node.type] || "#06B6D4";
+
+  // Connected nodes count
+  const connectionCount = graphLinks?.filter(
+    (l) => l.source === node.id || l.target === node.id || l.source?.id === node.id || l.target?.id === node.id
+  ).length || 0;
+
+  const sendChat = async () => {
+    if (!chatMsg.trim() || chatLoading) return;
+    const msg = chatMsg.trim();
+    setChatMsg("");
+    setChatHistory((prev) => [...prev, { role: "user", text: msg }]);
+    setChatLoading(true);
+    try {
+      const resp = await fetch(`${BACKEND}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg, session_id: sessionId, node_id: node.id }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setChatHistory((prev) => [
+          ...prev,
+          { role: "sarai", text: data.response, model: data.model_used, agent: data.agent },
+        ]);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 30 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 30 }}
+      className="flex flex-col h-full gap-3"
+      data-testid="node-detail-panel"
+    >
+      {/* Header */}
+      <div
+        className="glass-panel rounded-xl p-3 relative"
+        style={{ borderColor: color + "40" }}
+        data-testid="node-detail-header"
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-2 right-2 text-[#475569] hover:text-[#F8FAFC] transition-colors"
+          data-testid="close-node-detail"
+        >
+          <X size={14} />
+        </button>
+
+        {/* Type badge */}
+        <div
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-body mb-2 uppercase tracking-widest"
+          style={{ background: color + "15", color, border: `1px solid ${color}30` }}
+        >
+          <div className="w-1 h-1 rounded-full" style={{ background: color }} />
+          {node.type}
+        </div>
+
+        {/* Content */}
+        <p className="text-sm font-body text-[#F8FAFC] leading-relaxed pr-4">{node.content}</p>
+
+        {/* Meta row */}
+        <div className="flex items-center gap-3 mt-2">
+          <div className="flex items-center gap-1 text-[10px] font-body text-[#475569]">
+            <Link2 size={10} />
+            <span>{connectionCount} links</span>
+          </div>
+          {node.model_used && (
+            <div className="text-[10px] font-body text-[#334155] truncate">
+              via {node.model_used?.split("/")[1] || node.model_used}
+            </div>
+          )}
+          <button
+            onClick={() => onDelete(node.id)}
+            className="ml-auto text-[#334155] hover:text-red-400 transition-colors"
+            data-testid="delete-node-btn"
+          >
+            <Trash2 size={11} />
+          </button>
+        </div>
+      </div>
+
+      {/* Concepts */}
+      {node.concepts?.length > 0 && (
+        <div className="flex flex-wrap gap-1" data-testid="node-concepts">
+          {node.concepts.map((c) => (
+            <span
+              key={c}
+              className="px-2 py-0.5 rounded text-[10px] font-body"
+              style={{ background: color + "15", color, border: `1px solid ${color}25` }}
+            >
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Agent analysis */}
+      <div className="flex gap-2">
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => onAnalyze(node)}
+          disabled={isAnalyzing}
+          data-testid="analyze-node-btn"
+          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-body transition-all duration-200 ${
+            isAnalyzing
+              ? "bg-[#1E293B] text-[#475569]"
+              : "bg-[#06B6D4]/10 text-[#06B6D4] border border-[#06B6D4]/30 hover:bg-[#06B6D4]/20"
+          }`}
+        >
+          <Brain size={12} className={isAnalyzing ? "animate-spin" : ""} />
+          {isAnalyzing ? "Agents thinking..." : "Run Agent Analysis"}
+        </motion.button>
+      </div>
+
+      {/* Agent outputs */}
+      <AnimatePresence>
+        {agentOutputs && Object.keys(agentOutputs).length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="space-y-1.5 flex-1 overflow-y-auto scroll-cyber"
+            data-testid="agent-outputs"
+          >
+            {Object.entries(agentOutputs).map(([key, val]) => {
+              if (key === "synthesis") return null;
+              const colors = {
+                analyst: "#06B6D4",
+                strategist: "#3B82F6",
+                memory_curator: "#10B981",
+                skeptic: "#F59E0B",
+                emotional: "#8B5CF6",
+              };
+              const ac = colors[key] || "#06B6D4";
+              const output = typeof val === "object" ? val.output : val;
+              return (
+                <div
+                  key={key}
+                  className="glass-panel rounded-lg p-2.5"
+                  style={{ borderColor: ac + "30" }}
+                  data-testid={`agent-output-${key}`}
+                >
+                  <div
+                    className="text-[10px] font-body tracking-widest uppercase mb-1"
+                    style={{ color: ac }}
+                  >
+                    {key.replace("_", " ")}
+                  </div>
+                  <p className="text-[11px] font-body text-[#94A3B8] leading-relaxed">{output}</p>
+                </div>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Chat */}
+      <div className="mt-auto">
+        <div className="text-[10px] font-body text-[#334155] tracking-widest uppercase mb-2 flex items-center gap-1">
+          <MessageSquare size={10} />
+          <span>Query this node</span>
+        </div>
+
+        {/* Chat history */}
+        {chatHistory.length > 0 && (
+          <div
+            className="mb-2 space-y-1.5 max-h-32 overflow-y-auto scroll-cyber"
+            data-testid="chat-history"
+          >
+            {chatHistory.map((msg, i) => (
+              <div
+                key={i}
+                className={`text-[11px] font-body rounded p-2 ${
+                  msg.role === "user"
+                    ? "bg-[#1E293B] text-[#CBD5E1] ml-4"
+                    : "bg-[#06B6D4]/8 text-[#94A3B8] border border-[#06B6D4]/15"
+                }`}
+                data-testid={`chat-msg-${i}`}
+              >
+                {msg.role === "sarai" && (
+                  <div className="text-[9px] text-[#06B6D4] mb-0.5 uppercase tracking-widest">
+                    SARAI {msg.agent && `· ${msg.agent}`}
+                  </div>
+                )}
+                {msg.text}
+              </div>
+            ))}
+            {chatLoading && (
+              <div className="shimmer h-6 rounded" />
+            )}
+          </div>
+        )}
+
+        {/* Chat input */}
+        <div className="flex gap-2">
+          <input
+            value={chatMsg}
+            onChange={(e) => setChatMsg(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendChat()}
+            placeholder="Ask about this thought..."
+            className="flex-1 bg-[#0A0A0F] border border-[#1E293B] rounded-lg px-3 py-2 text-xs font-body text-[#F8FAFC] placeholder-[#334155] outline-none focus:border-[#06B6D4]/40 transition-colors"
+            data-testid="node-chat-input"
+          />
+          <button
+            onClick={sendChat}
+            disabled={!chatMsg.trim() || chatLoading}
+            data-testid="node-chat-send"
+            className="px-3 py-2 rounded-lg text-xs bg-[#06B6D4]/10 text-[#06B6D4] border border-[#06B6D4]/30 hover:bg-[#06B6D4]/20 disabled:opacity-30 transition-all"
+          >
+            <Zap size={12} />
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
+export default NodeDetail;
