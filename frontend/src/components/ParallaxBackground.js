@@ -16,12 +16,6 @@ const ParallaxBackground = () => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
 
-    const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      initStars();
-    };
-
     const initStars = () => {
       starsRef.current = [];
       STAR_LAYERS.forEach((layer, li) => {
@@ -42,10 +36,15 @@ const ParallaxBackground = () => {
       });
     };
 
-    const draw = (ts) => {
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      initStars();
+    };
+
+    const draw = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Deep space background
       const bg = ctx.createRadialGradient(
         canvas.width * 0.5, canvas.height * 0.3, 0,
         canvas.width * 0.5, canvas.height * 0.5, canvas.width * 0.8
@@ -56,51 +55,35 @@ const ParallaxBackground = () => {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Nebula hints
-      const neb = ctx.createRadialGradient(
-        canvas.width * 0.75, canvas.height * 0.25, 0,
-        canvas.width * 0.75, canvas.height * 0.25, canvas.width * 0.35
-      );
+      const neb = ctx.createRadialGradient(canvas.width * 0.75, canvas.height * 0.25, 0, canvas.width * 0.75, canvas.height * 0.25, canvas.width * 0.35);
       neb.addColorStop(0, "rgba(59, 130, 246, 0.04)");
       neb.addColorStop(0.5, "rgba(139, 92, 246, 0.02)");
       neb.addColorStop(1, "transparent");
       ctx.fillStyle = neb;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const neb2 = ctx.createRadialGradient(
-        canvas.width * 0.2, canvas.height * 0.7, 0,
-        canvas.width * 0.2, canvas.height * 0.7, canvas.width * 0.3
-      );
+      const neb2 = ctx.createRadialGradient(canvas.width * 0.2, canvas.height * 0.7, 0, canvas.width * 0.2, canvas.height * 0.7, canvas.width * 0.3);
       neb2.addColorStop(0, "rgba(6, 182, 212, 0.03)");
       neb2.addColorStop(1, "transparent");
       ctx.fillStyle = neb2;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Parallax mouse offset
       const mx = (mouseRef.current.x / window.innerWidth - 0.5) * 2;
       const my = (mouseRef.current.y / window.innerHeight - 0.5) * 2;
 
-      // Draw stars
       starsRef.current.forEach((star) => {
         star.twinkle += star.twinkleSpeed;
         const twinkleFactor = 0.6 + Math.sin(star.twinkle) * 0.4;
-
-        // Parallax offset
         const depth = (star.layer + 1) * 18;
-        const ox = mx * depth;
-        const oy = my * depth;
-
-        const sx = ((star.baseX + ox) % canvas.width + canvas.width) % canvas.width;
-        const sy = ((star.baseY + oy) % canvas.height + canvas.height) % canvas.height;
+        const sx = ((star.baseX + mx * depth) % canvas.width + canvas.width) % canvas.width;
+        const sy = ((star.baseY + my * depth) % canvas.height + canvas.height) % canvas.height;
 
         ctx.beginPath();
         ctx.arc(sx, sy, star.size, 0, Math.PI * 2);
-
-        // Occasional bright stars get a cyan tint
         const isCyan = Math.floor(star.baseX * 7 + star.baseY * 3) % 12 === 0;
-        const starColor = isCyan ? `rgba(6, 182, 212, ${star.opacity * twinkleFactor})` : `rgba(220, 230, 255, ${star.opacity * twinkleFactor})`;
-
-        ctx.fillStyle = starColor;
+        ctx.fillStyle = isCyan
+          ? `rgba(6, 182, 212, ${star.opacity * twinkleFactor})`
+          : `rgba(220, 230, 255, ${star.opacity * twinkleFactor})`;
         if (star.size > 1.5) {
           ctx.shadowBlur = 4;
           ctx.shadowColor = isCyan ? "#06B6D4" : "#ffffff";
@@ -112,10 +95,11 @@ const ParallaxBackground = () => {
       frameRef.current = requestAnimationFrame(draw);
     };
 
+    // Store handler ref so we can remove it on cleanup
+    const handleMouseMove = (e) => { mouseRef.current = { x: e.clientX, y: e.clientY }; };
+
     window.addEventListener("resize", resize);
-    window.addEventListener("mousemove", (e) => {
-      mouseRef.current = { x: e.clientX, y: e.clientY };
-    });
+    window.addEventListener("mousemove", handleMouseMove);
 
     resize();
     frameRef.current = requestAnimationFrame(draw);
@@ -123,8 +107,9 @@ const ParallaxBackground = () => {
     return () => {
       cancelAnimationFrame(frameRef.current);
       window.removeEventListener("resize", resize);
+      window.removeEventListener("mousemove", handleMouseMove); // Fixed: was missing before
     };
-  }, []);
+  }, []); // Intentionally empty — all state accessed via refs; runs once on mount
 
   return (
     <canvas

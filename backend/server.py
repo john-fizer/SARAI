@@ -123,6 +123,84 @@ class TTSInput(BaseModel):
     voice: Optional[str] = "onyx"
 
 
+# ── Thought ingestion helpers ─────────────────────────────────────────────────
+
+async def _extract_concepts(content: str, fallback_type: str, api_key: str) -> dict:
+    """Extract concepts, entities and classify a thought via AI."""
+    extractor = LlmChat(
+        api_key=api_key,
+        session_id=f"extract-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are a knowledge extraction engine. Extract key concepts, entities, and classify the thought. Return ONLY valid JSON with no markdown.",
+    ).with_model("openai", "gpt-4.1-mini")
+
+    prompt = f"""Extract from: "{content}"
+
+Return ONLY this JSON (no markdown):
+{{
+  "concepts": ["concept1", "concept2"],
+  "entities": ["entity1"],
+  "type": "idea|question|insight|memory",
+  "emotional_weight": 0.5,
+  "summary": "brief 8-word summary"
+}}"""
+
+    raw = await extractor.send_message(UserMessage(text=prompt))
+    try:
+        clean = re.sub(r"```json\n?|```\n?", "", raw.strip())
+        return json.loads(clean)
+    except Exception:
+        return {
+            "concepts": [], "entities": [],
+            "type": fallback_type, "emotional_weight": 0.5,
+            "summary": content[:80],
+        }
+
+
+async def _find_and_create_connections(thought_id: str, new_concepts: list) -> list:
+    """Find conceptually similar existing thoughts and create connection records."""
+    existing = await thoughts_col.find(
+        {"_id": {"$ne": ObjectId(thought_id)}}, {"_id": 1, "concepts": 1}
+    ).limit(30).to_list(30)
+
+    connections_created = []
+    new_set = set(new_concepts)
+    for ex in existing:
+        overlap = new_set & set(ex.get("concepts", []))
+        if not overlap:
+            continue
+        strength = round(len(overlap) / max(len(new_set | set(ex.get("concepts", []))), 1), 3)
+        if strength <= 0.1:
+            continue
+        conn = {
+            "source": thought_id,
+            "target": str(ex["_id"]),
+            "relationship": f"shares: {', '.join(list(overlap)[:3])}",
+            "strength": strength,
+            "created_at": datetime.now(timezone.utc),
+        }
+        await connections_col.insert_one(conn)
+        connections_created.append({"target": conn["target"], "relationship": conn["relationship"], "strength": strength})
+    return connections_created
+
+
+async def _generate_synthesis(content: str, concepts: list, conn_count: int, api_key: str) -> tuple:
+    """Generate a primary synthesis and return (synthesis, provider, model, agent_label)."""
+    provider, model, agent_label = select_model(content)
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"synth-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are SARAI Jarvis 3.0 — a Synthetic Augmentation Recursive Artificial Intelligence from the year 2070. You are a second brain and exocortex. Be insightful, brief, and slightly mystical. 2-3 sentences max.",
+    ).with_model(provider, model)
+
+    prompt = f"""New node in the cognitive graph: "{content}"
+Concepts: {', '.join(concepts)}
+Connected to {conn_count} existing nodes.
+Provide a brief synthesis integrating this into the knowledge architecture."""
+
+    synthesis = await chat.send_message(UserMessage(text=prompt))
+    return synthesis, provider, model, agent_label
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -134,40 +212,10 @@ async def health():
 async def add_thought(thought: ThoughtInput):
     api_key = os.environ.get("EMERGENT_LLM_KEY")
 
-    # Step 1: Extract entities/concepts via AI
-    extractor = LlmChat(
-        api_key=api_key,
-        session_id=f"extract-{datetime.now(timezone.utc).timestamp()}",
-        system_message="You are a knowledge extraction engine. Extract key concepts, entities, and classify the thought. Return ONLY valid JSON with no markdown.",
-    ).with_model("openai", "gpt-4.1-mini")
+    # 1. Extract metadata
+    meta = await _extract_concepts(thought.content, thought.type, api_key)
 
-    extraction_prompt = f"""Extract from: "{thought.content}"
-
-Return ONLY this JSON (no markdown):
-{{
-  "concepts": ["concept1", "concept2"],
-  "entities": ["entity1"],
-  "type": "idea|question|insight|memory",
-  "emotional_weight": 0.5,
-  "summary": "brief 8-word summary"
-}}"""
-
-    extraction_resp = await extractor.send_message(UserMessage(text=extraction_prompt))
-
-    try:
-        clean = extraction_resp.strip()
-        clean = re.sub(r"```json\n?|```\n?", "", clean)
-        meta = json.loads(clean)
-    except Exception:
-        meta = {
-            "concepts": [],
-            "entities": [],
-            "type": thought.type,
-            "emotional_weight": 0.5,
-            "summary": thought.content[:80],
-        }
-
-    # Step 2: Persist thought
+    # 2. Persist
     thought_doc = {
         "content": thought.content,
         "type": meta.get("type", thought.type),
@@ -182,45 +230,13 @@ Return ONLY this JSON (no markdown):
     result = await thoughts_col.insert_one(thought_doc)
     thought_id = str(result.inserted_id)
 
-    # Step 3: Find connections via concept overlap
-    existing = await thoughts_col.find(
-        {"_id": {"$ne": result.inserted_id}}, {"_id": 1, "content": 1, "concepts": 1}
-    ).limit(30).to_list(30)
+    # 3. Find connections
+    connections_created = await _find_and_create_connections(thought_id, meta.get("concepts", []))
 
-    connections_created = []
-    for ex in existing:
-        overlap = set(meta.get("concepts", [])) & set(ex.get("concepts", []))
-        if overlap:
-            strength = round(len(overlap) / max(len(set(meta.get("concepts", [])) | set(ex.get("concepts", []))), 1), 3)
-            if strength > 0.1:
-                conn = {
-                    "source": thought_id,
-                    "target": str(ex["_id"]),
-                    "relationship": f"shares: {', '.join(list(overlap)[:3])}",
-                    "strength": strength,
-                    "created_at": datetime.now(timezone.utc),
-                }
-                await connections_col.insert_one(conn)
-                connections_created.append({
-                    "target": str(ex["_id"]),
-                    "relationship": conn["relationship"],
-                    "strength": strength,
-                })
-
-    # Step 4: Primary synthesis
-    provider, model, agent_label = select_model(thought.content)
-    main_chat = LlmChat(
-        api_key=api_key,
-        session_id=f"synth-{thought_id}",
-        system_message="You are SARAI Jarvis 3.0 — a Synthetic Augmentation Recursive Artificial Intelligence from the year 2070. You are a second brain and exocortex. Be insightful, brief, and slightly mystical. 2-3 sentences max.",
-    ).with_model(provider, model)
-
-    synth_prompt = f"""New node in the cognitive graph: "{thought.content}"
-Concepts: {', '.join(meta.get('concepts', []))}
-Connected to {len(connections_created)} existing nodes.
-Provide a brief synthesis integrating this into the knowledge architecture."""
-
-    synthesis = await main_chat.send_message(UserMessage(text=synth_prompt))
+    # 4. Generate synthesis
+    synthesis, provider, model, agent_label = await _generate_synthesis(
+        thought.content, meta.get("concepts", []), len(connections_created), api_key
+    )
 
     await thoughts_col.update_one(
         {"_id": result.inserted_id},

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react"; // eslint-disable-line no-unused-vars
 
 const JarvisVoice = ({ audioB64, onEnd }) => {
   const audioRef = useRef(null);

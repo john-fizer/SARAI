@@ -3,6 +3,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Zap, Mic, MicOff, Loader } from "lucide-react";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const devLog = (msg, err) => { if (process.env.NODE_ENV === "development") console.error(msg, err); };
+
+// Stable animation configs (module-level prevents inline object re-creation)
+const PANEL_ENTRANCE = { initial: { opacity: 0, y: 40 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.6, delay: 0.3 } };
+const REC_STATUS_ANIM = { initial: { opacity: 0, y: 5 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 } };
+const REC_INDICATOR_ANIM = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } };
+const REC_DOT_ANIM = { animate: { scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }, transition: { duration: 0.8, repeat: Infinity } };
+const MIC_HOVER = { scale: 1.1 };
+const MIC_TAP = { scale: 0.95 };
+const SUBMIT_HOVER = { scale: 1.05 };
+const SUBMIT_TAP = { scale: 0.95 };
 
 const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
   const [value, setValue] = useState("");
@@ -27,7 +38,7 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
         setValue("");
       }
     } catch (err) {
-      console.error(err);
+      devLog("submitThought error:", err);
     } finally {
       setIsProcessing(false);
     }
@@ -59,7 +70,7 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
             setValue((prev) => prev ? prev + " " + text : text);
           }
         } catch (err) {
-          console.error(err);
+          devLog("STT error:", err);
         } finally {
           setRecStatus("");
         }
@@ -68,7 +79,7 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
       mediaRecRef.current = rec;
       setRecording(true);
     } catch (err) {
-      console.error("Mic error:", err);
+      devLog("Mic error:", err);
       setRecStatus("Mic access denied");
       setTimeout(() => setRecStatus(""), 2000);
     }
@@ -83,67 +94,41 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
 
   const toggleRecording = () => (recording ? stopRecording() : startRecording());
 
-  // Auto-resize textarea
+  // Auto-resize textarea — textareaRef is a stable ref, safe to omit from deps
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + "px";
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 120) + "px";
     }
-  }, [value]);
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 40 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, delay: 0.3 }}
-      className="w-full"
-      data-testid="thought-input-panel"
-    >
-      {/* Status messages */}
+    <motion.div {...PANEL_ENTRANCE} className="w-full" data-testid="thought-input-panel">
       <AnimatePresence>
         {recStatus && (
-          <motion.div
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            className="text-center text-xs text-[#06B6D4] font-body mb-2 tracking-widest"
-          >
+          <motion.div {...REC_STATUS_ANIM} className="text-center text-xs text-[#06B6D4] font-body mb-2 tracking-widest">
             {recStatus}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Recording indicator */}
       <AnimatePresence>
         {recording && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="flex items-center gap-2 justify-center mb-2"
-          >
-            <motion.div
-              animate={{ scale: [1, 1.3, 1], opacity: [1, 0.5, 1] }}
-              transition={{ duration: 0.8, repeat: Infinity }}
-              className="w-2 h-2 rounded-full bg-red-500"
-            />
+          <motion.div {...REC_INDICATOR_ANIM} className="flex items-center gap-2 justify-center mb-2">
+            <motion.div {...REC_DOT_ANIM} className="w-2 h-2 rounded-full bg-red-500" />
             <span className="text-xs text-red-400 font-body tracking-widest">RECORDING — SPEAK NOW</span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Input container */}
       <div
         className={`glass-panel rounded-2xl p-4 transition-all duration-300 ${isProcessing ? "border-[#3B82F6]/40" : "border-[#06B6D4]/20 hover:border-[#06B6D4]/40"}`}
         data-testid="thought-input-container"
       >
         <div className="flex items-end gap-3">
-          {/* Prefix */}
-          <div className="text-[#06B6D4] font-accent text-sm pb-1 shrink-0 neon-text select-none">
-            &gt;_
-          </div>
+          <div className="text-[#06B6D4] font-accent text-sm pb-1 shrink-0 neon-text select-none">&gt;_</div>
 
-          {/* Textarea */}
           <textarea
             ref={textareaRef}
             data-testid="thought-textarea"
@@ -157,12 +142,10 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
             style={{ minHeight: "28px", maxHeight: "120px" }}
           />
 
-          {/* Controls */}
           <div className="flex items-center gap-2 shrink-0 pb-1">
-            {/* Voice */}
             <motion.button
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.95 }}
+              whileHover={MIC_HOVER}
+              whileTap={MIC_TAP}
               onClick={toggleRecording}
               disabled={isProcessing}
               data-testid="voice-input-btn"
@@ -175,10 +158,9 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
               {recording ? <MicOff size={16} /> : <Mic size={16} />}
             </motion.button>
 
-            {/* Submit */}
             <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              whileHover={SUBMIT_HOVER}
+              whileTap={SUBMIT_TAP}
               onClick={handleSubmit}
               disabled={!value.trim() || isProcessing}
               data-testid="submit-thought-btn"
@@ -189,21 +171,14 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
               }`}
             >
               {isProcessing ? (
-                <>
-                  <Loader size={14} className="animate-spin" />
-                  <span>Processing</span>
-                </>
+                <><Loader size={14} className="animate-spin" /><span>Processing</span></>
               ) : (
-                <>
-                  <Zap size={14} />
-                  <span>Transmit</span>
-                </>
+                <><Zap size={14} /><span>Transmit</span></>
               )}
             </motion.button>
           </div>
         </div>
 
-        {/* Processing shimmer bar */}
         {isProcessing && (
           <div className="mt-3 h-0.5 rounded-full overflow-hidden">
             <div className="shimmer h-full w-full" />
@@ -211,12 +186,10 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
         )}
       </div>
 
-      {/* Hint */}
       <div className="flex items-center justify-center gap-4 mt-2">
         {["idea", "question", "insight", "memory"].map((type) => (
           <button
             key={type}
-            onClick={() => !isProcessing && setValue((v) => v)}
             className="text-[10px] font-body text-[#334155] hover:text-[#64748B] tracking-widest uppercase transition-colors"
             data-testid={`type-hint-${type}`}
           >
