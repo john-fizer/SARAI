@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Zap, Brain, MessageSquare, Trash2, Link2 } from "lucide-react";
+import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch } from "lucide-react";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const API_HEADERS = { "X-API-Key": process.env.REACT_APP_API_KEY || "" };
@@ -34,11 +34,13 @@ const ANALYZE_TAP = { scale: 0.98 };
 let msgCounter = 0;
 const makeId = () => `msg-${Date.now()}-${++msgCounter}`;
 
-const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks }) => {
+const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks, onSimulate }) => {
   const [chatMsg, setChatMsg] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [sessionId] = useState(`node-chat-${node.id}`);
+  const [consensusResult, setConsensusResult] = useState(null);
+  const [isConsensus, setIsConsensus] = useState(false);
 
   const color = TYPE_COLORS[node.type] || "#06B6D4";
 
