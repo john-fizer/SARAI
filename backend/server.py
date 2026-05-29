@@ -12,6 +12,8 @@ import re
 import base64
 import httpx
 from dotenv import load_dotenv
+import chromadb
+from chromadb.config import Settings
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -49,6 +51,16 @@ _client = AsyncIOMotorClient(MONGO_URL)
 db = _client[DB_NAME]
 thoughts_col = db.thoughts
 connections_col = db.connections
+
+# ChromaDB — persistent local vector store for semantic memory
+_chroma_client = chromadb.PersistentClient(
+    path=os.path.join(os.path.dirname(__file__), ".chromadb"),
+    settings=Settings(anonymized_telemetry=False),
+)
+_chroma_col = _chroma_client.get_or_create_collection(
+    name="thoughts",
+    metadata={"hnsw:space": "cosine"},
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -213,6 +225,58 @@ async def _find_and_create_connections(thought_id: str, new_concepts: list) -> l
     return connections_created
 
 
+async def _upsert_embedding(thought_id: str, content: str, metadata: dict) -> None:
+    """Store thought embedding in ChromaDB for semantic search."""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: _chroma_col.upsert(
+            ids=[thought_id],
+            documents=[content],
+            metadatas=[{
+                "type": metadata.get("type", "idea"),
+                "emotional_weight": float(metadata.get("emotional_weight", 0.5)),
+                "summary": metadata.get("summary", "")[:200],
+            }],
+        )
+    )
+
+
+async def _find_semantic_connections(thought_id: str, content: str, existing_ids: set) -> list:
+    """Find semantically similar thoughts via ChromaDB cosine similarity."""
+    n_existing = _chroma_col.count()
+    if n_existing < 2:
+        return []
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        None,
+        lambda: _chroma_col.query(
+            query_texts=[content],
+            n_results=min(10, n_existing),
+            where=None,
+        )
+    )
+    semantic_conns = []
+    ids = results.get("ids", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+    for rid, dist in zip(ids, distances):
+        if rid == thought_id or rid in existing_ids:
+            continue
+        similarity = round(1.0 - dist, 3)
+        if similarity < 0.35:
+            continue
+        conn = {
+            "source": thought_id,
+            "target": rid,
+            "relationship": "semantic similarity",
+            "strength": similarity,
+            "created_at": datetime.now(timezone.utc),
+        }
+        await connections_col.insert_one(conn)
+        semantic_conns.append({"target": rid, "relationship": "semantic similarity", "strength": similarity})
+    return semantic_conns
+
+
 async def _generate_synthesis(content: str, concepts: list, conn_count: int, api_key: str) -> tuple:
     """Generate a primary synthesis and return (synthesis, provider, model, agent_label)."""
     provider, model, agent_label = select_model(content)
@@ -263,6 +327,14 @@ async def add_thought(request: Request, thought: ThoughtInput, _auth=Depends(_ch
 
     # 3. Find connections
     connections_created = await _find_and_create_connections(thought_id, meta.get("concepts", []))
+
+    # Upsert embedding then find semantic connections
+    await _upsert_embedding(thought_id, thought.content, meta)
+    semantic_connections = await _find_semantic_connections(
+        thought_id, thought.content,
+        existing_ids={c["target"] for c in connections_created}
+    )
+    connections_created.extend(semantic_connections)
 
     # 4. Generate synthesis
     synthesis, provider, model, agent_label = await _generate_synthesis(
@@ -440,6 +512,37 @@ async def get_stats(_auth=Depends(_check_api_key)):
         "total_connections": connection_count,
         "type_distribution": type_dist,
         "brain_coherence": coherence,
+    }
+
+
+@app.get("/api/memory/search")
+async def semantic_search(q: str, limit: int = 10, _auth=Depends(_check_api_key)):
+    """Semantic search across all stored thoughts."""
+    n_existing = _chroma_col.count()
+    if n_existing == 0:
+        return {"results": []}
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        None,
+        lambda: _chroma_col.query(
+            query_texts=[q],
+            n_results=min(limit, n_existing),
+        )
+    )
+    ids = results.get("ids", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    return {
+        "results": [
+            {
+                "id": rid,
+                "similarity": round(1.0 - dist, 3),
+                "type": meta.get("type", ""),
+                "summary": meta.get("summary", ""),
+            }
+            for rid, dist, meta in zip(ids, distances, metadatas)
+            if round(1.0 - dist, 3) >= 0.2
+        ]
     }
 
 
