@@ -1,15 +1,17 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, Target, Database, AlertTriangle, Heart, ChevronDown, ChevronUp } from "lucide-react";
+import { Brain, Target, Database, AlertTriangle, Heart, Shield, Zap, ChevronDown, ChevronUp } from "lucide-react";
 
-const AGENT_ICONS = { analyst: Brain, strategist: Target, memory_curator: Database, skeptic: AlertTriangle, emotional: Heart };
+const AGENT_ICONS = { analyst: Brain, strategist: Target, memory_curator: Database, skeptic: AlertTriangle, emotional: Heart, identity_stabilizer: Shield, execution: Zap };
 
 const AGENTS = [
   { key: "analyst",        name: "Analyst",          color: "#06B6D4", desc: "Logic & contradiction" },
   { key: "strategist",     name: "Strategist",        color: "#3B82F6", desc: "Long-term planning" },
   { key: "memory_curator", name: "Memory Curator",    color: "#10B981", desc: "Pattern recognition" },
   { key: "skeptic",        name: "Skeptic",           color: "#F59E0B", desc: "Adversarial analysis" },
-  { key: "emotional",      name: "Emotional",         color: "#8B5CF6", desc: "Emotional context" },
+  { key: "emotional",           name: "Emotional",          color: "#8B5CF6", desc: "Emotional context" },
+  { key: "identity_stabilizer", name: "Identity Stabilizer", color: "#EC4899", desc: "Mission continuity" },
+  { key: "execution",           name: "Execution Agent",     color: "#F97316", desc: "Action & automation" },
 ];
 
 // Stable animation configs

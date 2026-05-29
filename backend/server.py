@@ -116,6 +116,22 @@ AGENTS = {
         "provider": "anthropic",
         "model": "claude-sonnet-4-5",
     },
+    "identity_stabilizer": {
+        "name": "Identity Stabilizer",
+        "color": "#EC4899",
+        "icon": "shield",
+        "system": "You are the Identity Stabilizer Agent of SARAI. Maintain mission continuity, detect value drift, and anchor reasoning to core principles. Be concise (2 sentences max). Start directly.",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+    },
+    "execution": {
+        "name": "Execution Agent",
+        "color": "#F97316",
+        "icon": "zap",
+        "system": "You are the Execution Agent of SARAI. Identify concrete next actions, tool calls, and automation opportunities from this thought. Be concise (2 sentences max). Start directly.",
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+    },
 }
 
 
