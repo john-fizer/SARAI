@@ -1048,6 +1048,208 @@ async def debate_agents(thought: ThoughtInput, _auth=Depends(_check_api_key)):
     return {"debate": debate, "thought": thought.content, "rounds": 2}
 
 
+@app.post("/api/plan")
+async def autonomous_plan(thought: ThoughtInput, _auth=Depends(_check_api_key)):
+    """
+    Autonomous planning: given a goal/thought, generate a multi-step action
+    plan with dependencies, estimated effort, and success metrics.
+    """
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    # Pull semantic context from memory
+    memory_context = ""
+    try:
+        n_existing = _chroma_col.count()
+        if n_existing > 0:
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: _chroma_col.query(query_texts=[thought.content], n_results=min(6, n_existing))
+            )
+            summaries = [
+                m.get("summary", "") for m, d in zip(
+                    results.get("metadatas", [[]])[0],
+                    results.get("distances", [[]])[0]
+                ) if (1.0 - d) >= 0.3 and m.get("summary")
+            ]
+            if summaries:
+                memory_context = "\n\nRelevant knowledge:\n" + "\n".join(f"- {s}" for s in summaries)
+    except Exception:
+        pass
+
+    planner = LlmChat(
+        api_key=api_key,
+        session_id=f"plan-{datetime.now(timezone.utc).timestamp()}",
+        system_message=(
+            "You are the Strategic Planning Engine of SARAI. Generate precise, actionable plans. "
+            "Return ONLY valid JSON with no markdown."
+        ),
+    ).with_model("anthropic", "claude-sonnet-4-5")
+
+    prompt = f"""Goal: "{thought.content}"{memory_context}
+
+Generate a strategic action plan. Return ONLY this JSON:
+{{
+  "goal": "refined goal statement",
+  "steps": [
+    {{
+      "id": 1,
+      "action": "specific action",
+      "depends_on": [],
+      "effort": "low|medium|high",
+      "timeframe": "immediate|short-term|long-term",
+      "success_metric": "how to measure completion"
+    }}
+  ],
+  "risks": ["risk1", "risk2"],
+  "first_move": "the single most important first action"
+}}
+Include 3-6 steps. Ensure depends_on references valid step ids."""
+
+    raw = await planner.send_message(UserMessage(text=prompt))
+    try:
+        clean = re.sub(r"```json\n?|```\n?", "", raw.strip())
+        plan = json.loads(clean)
+    except Exception:
+        plan = {"goal": thought.content, "steps": [], "risks": [], "first_move": raw[:200]}
+
+    return {"plan": plan, "thought": thought.content}
+
+
+@app.get("/api/reflect/improve")
+async def self_improve(_auth=Depends(_check_api_key)):
+    """
+    Analyze patterns across all stored reflections to surface system-level
+    insights and improvement recommendations.
+    """
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    # Sample recent thoughts with reflections
+    thoughts = await thoughts_col.find(
+        {"reflection": {"$exists": True, "$ne": {}}},
+        {"content": 1, "reflection": 1, "concepts": 1, "type": 1}
+    ).sort("created_at", -1).limit(20).to_list(20)
+
+    if not thoughts:
+        return {"insights": [], "patterns": [], "recommendation": "Not enough reflection data yet."}
+
+    # Build reflection summary
+    reflection_data = []
+    for t in thoughts:
+        r = t.get("reflection", {})
+        if r.get("confidence") is not None:
+            reflection_data.append({
+                "content_summary": t.get("content", "")[:100],
+                "confidence": r.get("confidence"),
+                "contradictions": r.get("contradictions", [])[:2],
+                "evaluation": r.get("evaluation", "")[:100],
+            })
+
+    analyst = LlmChat(
+        api_key=api_key,
+        session_id=f"improve-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are SARAI's self-improvement engine. Analyze reflection patterns and identify systemic insights. Return ONLY valid JSON.",
+    ).with_model("anthropic", "claude-sonnet-4-5")
+
+    prompt = f"""Analyze these {len(reflection_data)} thought reflections from a cognitive OS:
+
+{json.dumps(reflection_data[:10], indent=2)}
+
+Return ONLY this JSON:
+{{
+  "avg_confidence": 0.0,
+  "patterns": ["pattern1", "pattern2"],
+  "recurring_contradictions": ["theme1"],
+  "insights": ["insight1", "insight2", "insight3"],
+  "recommendation": "single most important improvement suggestion",
+  "cognitive_health": "assessment of overall reasoning quality"
+}}"""
+
+    raw = await analyst.send_message(UserMessage(text=prompt))
+    try:
+        clean = re.sub(r"```json\n?|```\n?", "", raw.strip())
+        return json.loads(clean)
+    except Exception:
+        return {"insights": [raw[:300]], "patterns": [], "recommendation": "", "cognitive_health": ""}
+
+
+@app.post("/api/predict")
+async def predict_future(thought: ThoughtInput, _auth=Depends(_check_api_key)):
+    """
+    Temporal prediction: uses knowledge graph patterns and concept
+    trajectories to forecast likely developments.
+    """
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    # Get temporal sequence of related thoughts
+    related_thoughts = []
+    try:
+        n_existing = _chroma_col.count()
+        if n_existing > 0:
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: _chroma_col.query(query_texts=[thought.content], n_results=min(8, n_existing))
+            )
+            ids = results.get("ids", [[]])[0]
+            dists = results.get("distances", [[]])[0]
+            relevant_ids = [rid for rid, d in zip(ids, dists) if (1.0 - d) >= 0.3]
+            if relevant_ids:
+                from bson import ObjectId as ObjId
+                docs = await thoughts_col.find(
+                    {"_id": {"$in": [ObjId(rid) for rid in relevant_ids if len(rid) == 24]}},
+                    {"content": 1, "concepts": 1, "emotional_weight": 1, "created_at": 1}
+                ).sort("created_at", 1).to_list(8)
+                related_thoughts = [
+                    {
+                        "content": d.get("content", "")[:120],
+                        "concepts": d.get("concepts", [])[:4],
+                        "emotional_weight": d.get("emotional_weight", 0.5),
+                    }
+                    for d in docs
+                ]
+    except Exception:
+        pass
+
+    predictor = LlmChat(
+        api_key=api_key,
+        session_id=f"predict-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are SARAI's Predictive Modeling Engine. Analyze trajectories and forecast developments. Return ONLY valid JSON.",
+    ).with_model("anthropic", "claude-sonnet-4-5")
+
+    context_str = json.dumps(related_thoughts, indent=2) if related_thoughts else "No related history."
+    prompt = f"""Current thought: "{thought.content}"
+
+Related thought trajectory:
+{context_str}
+
+Predict likely future developments. Return ONLY this JSON:
+{{
+  "predictions": [
+    {{
+      "outcome": "specific predicted outcome",
+      "probability": 0.0,
+      "timeframe": "days|weeks|months|years",
+      "driving_force": "key factor enabling this",
+      "early_signal": "what to watch for"
+    }}
+  ],
+  "trajectory": "overall direction of thinking",
+  "inflection_point": "the decision or event that will matter most",
+  "blind_spot": "what is likely being overlooked"
+}}
+Include 3 predictions ordered by probability descending."""
+
+    raw = await predictor.send_message(UserMessage(text=prompt))
+    try:
+        clean = re.sub(r"```json\n?|```\n?", "", raw.strip())
+        result = json.loads(clean)
+    except Exception:
+        result = {"predictions": [], "trajectory": raw[:200], "inflection_point": "", "blind_spot": ""}
+
+    return {**result, "thought": thought.content}
+
+
 @app.delete("/api/thoughts/{thought_id}")
 async def delete_thought(thought_id: str, _auth=Depends(_check_api_key)):
     try:
