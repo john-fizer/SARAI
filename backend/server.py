@@ -295,6 +295,73 @@ Provide a brief synthesis integrating this into the knowledge architecture."""
     return synthesis, provider, model, agent_label
 
 
+async def _recursive_reflect(
+    thought_id: str,
+    content: str,
+    synthesis: str,
+    concepts: list,
+    api_key: str,
+) -> dict:
+    """Self-evaluation loop: score, detect contradictions, optionally revise."""
+    # Find semantically close existing thoughts for contradiction detection
+    similar_summaries = []
+    try:
+        n_existing = _chroma_col.count()
+        if n_existing >= 2:
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: _chroma_col.query(
+                    query_texts=[content],
+                    n_results=min(5, n_existing),
+                )
+            )
+            ids = results.get("ids", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            dists = results.get("distances", [[]])[0]
+            for rid, meta, dist in zip(ids, metas, dists):
+                if rid != thought_id and (1.0 - dist) >= 0.5:
+                    similar_summaries.append(meta.get("summary", ""))
+    except Exception:
+        pass
+
+    context = ""
+    if similar_summaries:
+        context = "\n\nRelated existing thoughts:\n" + "\n".join(f"- {s}" for s in similar_summaries if s)
+
+    reflector = LlmChat(
+        api_key=api_key,
+        session_id=f"reflect-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are SARAI's internal self-evaluation engine. Analyze the thought and its synthesis critically. Return ONLY valid JSON with no markdown.",
+    ).with_model("openai", "gpt-4.1-mini")
+
+    prompt = f"""Evaluate this thought and its synthesis.
+
+Thought: "{content}"
+Synthesis: "{synthesis}"{context}
+
+Return ONLY this JSON (no markdown):
+{{
+  "confidence": 0.85,
+  "contradictions": ["brief description if any, else empty list"],
+  "revision": "improved synthesis if confidence < 0.7, else empty string",
+  "evaluation": "one sentence meta-assessment"
+}}"""
+
+    raw = await reflector.send_message(UserMessage(text=prompt))
+    try:
+        clean = re.sub(r"```json\n?|```\n?", "", raw.strip())
+        result = json.loads(clean)
+        return {
+            "confidence": float(result.get("confidence", 0.8)),
+            "contradictions": result.get("contradictions", []),
+            "revision": result.get("revision", ""),
+            "evaluation": result.get("evaluation", ""),
+        }
+    except Exception:
+        return {"confidence": 0.8, "contradictions": [], "revision": "", "evaluation": ""}
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -346,6 +413,19 @@ async def add_thought(request: Request, thought: ThoughtInput, _auth=Depends(_ch
         {"$set": {"agent_outputs.synthesis": synthesis, "model_used": f"{provider}/{model}"}},
     )
 
+    # Recursive reflection — self-evaluate the synthesis
+    reflection = await _recursive_reflect(
+        thought_id, thought.content, synthesis, meta.get("concepts", []), api_key
+    )
+    final_synthesis = reflection.get("revision") or synthesis
+    await thoughts_col.update_one(
+        {"_id": result.inserted_id},
+        {"$set": {
+            "reflection": reflection,
+            "agent_outputs.synthesis": final_synthesis,
+        }},
+    )
+
     return {
         "id": thought_id,
         "content": thought.content,
@@ -354,7 +434,8 @@ async def add_thought(request: Request, thought: ThoughtInput, _auth=Depends(_ch
         "entities": meta.get("entities", []),
         "emotional_weight": float(meta.get("emotional_weight", 0.5)),
         "connections": connections_created,
-        "synthesis": synthesis,
+        "synthesis": final_synthesis,
+        "reflection": reflection,
         "model_used": f"{provider}/{model}",
         "agent_label": agent_label,
     }
@@ -377,6 +458,7 @@ async def get_graph(_auth=Depends(_check_api_key)):
             "created_at": t.get("created_at", datetime.now(timezone.utc)).isoformat(),
             "model_used": t.get("model_used", ""),
             "agent_outputs": t.get("agent_outputs", {}),
+            "reflection": t.get("reflection", {}),
         }
         for t in thoughts
     ]
