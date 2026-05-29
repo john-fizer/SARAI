@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Any
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -12,21 +12,35 @@ import re
 import base64
 import httpx
 from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.llm.openai import OpenAITextToSpeech
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="SARAI Jarvis 3.0 — Second Brain")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+_FRONTEND_ORIGIN = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[_FRONTEND_ORIGIN],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_API_KEY = os.environ.get("API_KEY", "")
+
+
+def _check_api_key(request: Request):
+    if request.headers.get("X-API-Key") != _API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 # MongoDB
 MONGO_URL = os.environ.get("MONGO_URL")
@@ -49,11 +63,11 @@ def select_model(content: str) -> tuple:
     lo = content.lower()
     wc = len(content.split())
     if any(k in lo for k in ["analyze", "why", "explain", "reflect", "understand", "reason", "think deeply"]):
-        return "anthropic", "claude-4-sonnet-20250514", "Analyst"
+        return "anthropic", "claude-sonnet-4-5", "Analyst"
     if any(k in lo for k in ["plan", "strategy", "goal", "future", "optimize", "roadmap"]):
-        return "anthropic", "claude-4-sonnet-20250514", "Strategist"
+        return "anthropic", "claude-sonnet-4-5", "Strategist"
     if any(k in lo for k in ["feel", "emotion", "fear", "hope", "dream", "love", "hate"]):
-        return "anthropic", "claude-4-sonnet-20250514", "Emotional Interpreter"
+        return "anthropic", "claude-sonnet-4-5", "Emotional Interpreter"
     if wc < 6:
         return "openai", "gpt-4.1-mini", "Memory Curator"
     return "openai", "gpt-4.1", "Analyst"
@@ -76,7 +90,7 @@ AGENTS = {
         "icon": "target",
         "system": "You are the Strategist Agent of SARAI. Provide long-term planning insights, optimization, and execution pathways. Be concise (2 sentences max). Start directly.",
         "provider": "anthropic",
-        "model": "claude-4-sonnet-20250514",
+        "model": "claude-sonnet-4-5",
     },
     "memory_curator": {
         "name": "Memory Curator",
@@ -100,7 +114,7 @@ AGENTS = {
         "icon": "heart",
         "system": "You are the Emotional Interpreter Agent of SARAI. Identify emotional context, motivational drivers, and psychological underpinnings. Be concise (2 sentences max). Start directly.",
         "provider": "anthropic",
-        "model": "claude-4-sonnet-20250514",
+        "model": "claude-sonnet-4-5",
     },
 }
 
@@ -108,12 +122,12 @@ AGENTS = {
 # ── Request Models ────────────────────────────────────────────────────────────
 
 class ThoughtInput(BaseModel):
-    content: str
+    content: str = Field(..., max_length=2000)
     type: Optional[str] = "idea"
 
 
 class ChatInput(BaseModel):
-    message: str
+    message: str = Field(..., max_length=4000)
     session_id: Optional[str] = "default"
     node_id: Optional[str] = None
 
@@ -209,7 +223,8 @@ async def health():
 
 
 @app.post("/api/thoughts")
-async def add_thought(thought: ThoughtInput):
+@limiter.limit("30/minute")
+async def add_thought(request: Request, thought: ThoughtInput, _auth=Depends(_check_api_key)):
     api_key = os.environ.get("EMERGENT_LLM_KEY")
 
     # 1. Extract metadata
@@ -258,7 +273,7 @@ async def add_thought(thought: ThoughtInput):
 
 
 @app.get("/api/graph")
-async def get_graph():
+async def get_graph(_auth=Depends(_check_api_key)):
     thoughts = await thoughts_col.find({}).to_list(500)
     connections = await connections_col.find({}).to_list(1000)
 
@@ -293,7 +308,7 @@ async def get_graph():
 
 
 @app.post("/api/agents/analyze")
-async def analyze_with_agents(thought: ThoughtInput):
+async def analyze_with_agents(thought: ThoughtInput, _auth=Depends(_check_api_key)):
     api_key = os.environ.get("EMERGENT_LLM_KEY")
 
     async def run_agent(agent_key: str, cfg: dict):
@@ -324,7 +339,7 @@ async def analyze_with_agents(thought: ThoughtInput):
 
 
 @app.post("/api/chat")
-async def chat_endpoint(chat_input: ChatInput):
+async def chat_endpoint(chat_input: ChatInput, _auth=Depends(_check_api_key)):
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     provider, model, agent_label = select_model(chat_input.message)
 
@@ -349,7 +364,7 @@ async def chat_endpoint(chat_input: ChatInput):
 
 
 @app.post("/api/tts")
-async def text_to_speech(tts_input: TTSInput):
+async def text_to_speech(tts_input: TTSInput, _auth=Depends(_check_api_key)):
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     tts_engine = OpenAITextToSpeech(api_key=api_key)
     text = tts_input.text[:500]
@@ -360,7 +375,7 @@ async def text_to_speech(tts_input: TTSInput):
 
 
 @app.post("/api/stt")
-async def speech_to_text(file: UploadFile = File(...)):
+async def speech_to_text(file: UploadFile = File(...), _auth=Depends(_check_api_key)):
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     audio_bytes = await file.read()
     async with httpx.AsyncClient(timeout=30) as client:
@@ -376,7 +391,7 @@ async def speech_to_text(file: UploadFile = File(...)):
 
 
 @app.get("/api/timeline")
-async def get_timeline():
+async def get_timeline(_auth=Depends(_check_api_key)):
     docs = await thoughts_col.find(
         {}, {"_id": 1, "content": 1, "type": 1, "created_at": 1, "concepts": 1, "emotional_weight": 1, "summary": 1}
     ).sort("created_at", 1).to_list(200)
@@ -398,7 +413,7 @@ async def get_timeline():
 
 
 @app.get("/api/stats")
-async def get_stats():
+async def get_stats(_auth=Depends(_check_api_key)):
     thought_count = await thoughts_col.count_documents({})
     connection_count = await connections_col.count_documents({})
     pipeline = [{"$group": {"_id": "$type", "count": {"$sum": 1}}}]
@@ -413,8 +428,12 @@ async def get_stats():
 
 
 @app.delete("/api/thoughts/{thought_id}")
-async def delete_thought(thought_id: str):
-    await thoughts_col.delete_one({"_id": ObjectId(thought_id)})
+async def delete_thought(thought_id: str, _auth=Depends(_check_api_key)):
+    try:
+        oid = ObjectId(thought_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid thought ID")
+    await thoughts_col.delete_one({"_id": oid})
     await connections_col.delete_many(
         {"$or": [{"source": thought_id}, {"target": thought_id}]}
     )
