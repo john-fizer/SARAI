@@ -11,6 +11,7 @@ import json
 import re
 import base64
 import httpx
+import networkx as nx
 from dotenv import load_dotenv
 import chromadb
 from chromadb.config import Settings
@@ -362,6 +363,38 @@ Return ONLY this JSON (no markdown):
         return {"confidence": 0.8, "contradictions": [], "revision": "", "evaluation": ""}
 
 
+async def _run_consensus(content: str, agent_results: dict, api_key: str) -> dict:
+    """Run a meta-synthesis over all agent outputs to produce a consensus verdict."""
+    summaries = "\n".join(
+        f"- {v['name']}: {v['output'][:200]}"
+        for v in agent_results.values()
+        if isinstance(v, dict) and v.get("output")
+    )
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"consensus-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are a meta-cognitive consensus engine. Given multiple agent perspectives on a thought, synthesize a final verdict. Return ONLY valid JSON with no markdown.",
+    ).with_model("openai", "gpt-4.1-mini")
+    prompt = f"""Thought: "{content}"
+
+Agent perspectives:
+{summaries}
+
+Return ONLY this JSON:
+{{
+  "consensus": "2-3 sentence unified synthesis",
+  "confidence": 0.85,
+  "dominant_frame": "analyst|strategist|emotional|skeptic|memory_curator|identity_stabilizer|execution",
+  "dissent": "brief note on the most conflicting perspective, or null"
+}}"""
+    raw = await chat.send_message(UserMessage(text=prompt))
+    try:
+        clean = re.sub(r"```json\n?|```\n?", "", raw.strip())
+        return json.loads(clean)
+    except Exception:
+        return {"consensus": raw[:300], "confidence": 0.5, "dominant_frame": "analyst", "dissent": None}
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -658,6 +691,138 @@ async def semantic_search(q: str, limit: int = 10, _auth=Depends(_check_api_key)
             if round(1.0 - dist, 3) >= 0.2
         ]
     }
+
+
+@app.post("/api/agents/consensus")
+async def agents_consensus(thought: ThoughtInput, _auth=Depends(_check_api_key)):
+    """Run all agents then produce a consensus synthesis."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    async def run_agent(agent_key: str, cfg: dict):
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"agent-{agent_key}-{datetime.now(timezone.utc).timestamp()}",
+            system_message=cfg["system"],
+        ).with_model(cfg["provider"], cfg["model"])
+        resp = await chat.send_message(UserMessage(text=f'Analyze this thought: "{thought.content}"'))
+        return agent_key, resp
+
+    tasks = [run_agent(k, v) for k, v in AGENTS.items()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    agent_results = {}
+    for r in results:
+        if isinstance(r, tuple):
+            key, output = r
+            agent_results[key] = {
+                "name": AGENTS[key]["name"],
+                "color": AGENTS[key]["color"],
+                "output": output,
+            }
+
+    consensus = await _run_consensus(thought.content, agent_results, api_key)
+    return {"agents": agent_results, "consensus": consensus, "thought": thought.content}
+
+
+@app.post("/api/simulate")
+async def simulate(thought: ThoughtInput, _auth=Depends(_check_api_key)):
+    """Project 3 probable future scenarios from the current knowledge state."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    # Pull top semantic neighbours for context
+    context_nodes = []
+    try:
+        n_existing = _chroma_col.count()
+        if n_existing > 0:
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: _chroma_col.query(query_texts=[thought.content], n_results=min(6, n_existing))
+            )
+            metas = results.get("metadatas", [[]])[0]
+            dists = results.get("distances", [[]])[0]
+            context_nodes = [
+                m.get("summary", "") for m, d in zip(metas, dists)
+                if (1.0 - d) >= 0.3 and m.get("summary")
+            ]
+    except Exception:
+        pass
+
+    context_str = "\n".join(f"- {s}" for s in context_nodes) if context_nodes else "No prior context."
+
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"simulate-{datetime.now(timezone.utc).timestamp()}",
+        system_message="You are SARAI's simulation engine — a probabilistic future-state projector. Given a thought and its knowledge context, generate 3 distinct probable future scenarios. Return ONLY valid JSON with no markdown.",
+    ).with_model("anthropic", "claude-sonnet-4-5")
+
+    prompt = f"""Current thought: "{thought.content}"
+
+Related knowledge context:
+{context_str}
+
+Project 3 distinct future scenarios. Return ONLY this JSON:
+{{
+  "scenarios": [
+    {{
+      "title": "short title",
+      "description": "2-3 sentence scenario description",
+      "probability": 0.6,
+      "timeframe": "short-term|medium-term|long-term",
+      "key_driver": "the main factor driving this outcome"
+    }}
+  ]
+}}"""
+
+    raw = await chat.send_message(UserMessage(text=prompt))
+    try:
+        clean = re.sub(r"```json\n?|```\n?", "", raw.strip())
+        data = json.loads(clean)
+        return {"scenarios": data.get("scenarios", []), "thought": thought.content}
+    except Exception:
+        return {"scenarios": [], "thought": thought.content, "error": "parse error"}
+
+
+@app.get("/api/graph/path")
+async def graph_path(from_id: str, to_id: str, _auth=Depends(_check_api_key)):
+    """Find the conceptual path between two thoughts in the knowledge graph."""
+    # Validate IDs
+    for nid in (from_id, to_id):
+        try:
+            ObjectId(nid)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid id: {nid}")
+
+    connections = await connections_col.find({}, {"source": 1, "target": 1, "relationship": 1, "strength": 1}).to_list(2000)
+
+    G = nx.Graph()
+    for c in connections:
+        G.add_edge(c["source"], c["target"], relationship=c.get("relationship", ""), strength=c.get("strength", 0.5))
+
+    if not G.has_node(from_id) or not G.has_node(to_id):
+        return {"path": [], "found": False, "message": "One or both nodes have no connections"}
+
+    try:
+        path = nx.shortest_path(G, source=from_id, target=to_id)
+    except nx.NetworkXNoPath:
+        return {"path": [], "found": False, "message": "No path exists between these nodes"}
+
+    # Enrich path with thought content
+    path_nodes = []
+    for nid in path:
+        try:
+            doc = await thoughts_col.find_one({"_id": ObjectId(nid)}, {"content": 1, "type": 1, "concepts": 1})
+            if doc:
+                path_nodes.append({
+                    "id": nid,
+                    "content": doc.get("content", ""),
+                    "type": doc.get("type", "idea"),
+                    "concepts": doc.get("concepts", []),
+                })
+        except Exception:
+            path_nodes.append({"id": nid, "content": "", "type": "idea", "concepts": []})
+
+    return {"path": path_nodes, "found": True, "length": len(path) - 1}
 
 
 @app.delete("/api/thoughts/{thought_id}")
