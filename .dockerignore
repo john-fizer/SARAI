@@ -1,0 +1,13 @@
+node_modules
+.env
+.env.*
+*.env
+__pycache__
+*.pyc
+.chromadb
+.swarm
+ruvector.db
+.claude-flow
+.claude
+memory
+test_reports

@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: sarai
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: sarai
+      EMERGENT_LLM_KEY: ${EMERGENT_LLM_KEY}
+      API_KEY: ${API_KEY}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    depends_on:
+      - mongo
+    volumes:
+      - chroma_data:/app/.chromadb
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-http://localhost:8000}
+      REACT_APP_API_KEY: ${API_KEY}
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  chroma_data:
