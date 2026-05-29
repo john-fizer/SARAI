@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Zap, Mic, MicOff, Loader } from "lucide-react";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const API_HEADERS = { "X-API-Key": process.env.REACT_APP_API_KEY || "" };
 const devLog = (msg, err) => { if (process.env.NODE_ENV === "development") console.error(msg, err); };
 
 // Stable animation configs (module-level prevents inline object re-creation)
@@ -29,7 +30,7 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
     try {
       const resp = await fetch(`${BACKEND}/api/thoughts`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
         body: JSON.stringify({ content: value.trim() }),
       });
       if (resp.ok) {
@@ -64,7 +65,7 @@ const ThoughtInput = ({ onThoughtAdded, isProcessing, setIsProcessing }) => {
         form.append("file", blob, "voice.webm");
         setRecStatus("Transcribing...");
         try {
-          const res = await fetch(`${BACKEND}/api/stt`, { method: "POST", body: form });
+          const res = await fetch(`${BACKEND}/api/stt`, { method: "POST", headers: API_HEADERS, body: form });
           if (res.ok) {
             const { text } = await res.json();
             setValue((prev) => prev ? prev + " " + text : text);

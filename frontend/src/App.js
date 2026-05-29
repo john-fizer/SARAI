@@ -12,6 +12,7 @@ import NodeDetail from "./components/NodeDetail";
 import JarvisVoice from "./components/JarvisVoice";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const API_HEADERS = { "X-API-Key": process.env.REACT_APP_API_KEY || "" };
 const devLog = (msg, err) => { if (process.env.NODE_ENV === "development") console.error(msg, err); };
 
 // Stable animation configs (outside component to prevent re-render object creation)
@@ -57,7 +58,7 @@ export default function App() {
       try {
         const resp = await fetch(`${BACKEND}/api/tts`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...API_HEADERS },
           body: JSON.stringify({ text: data.synthesis }),
         });
         if (resp.ok) {
@@ -77,7 +78,7 @@ export default function App() {
     try {
       const resp = await fetch(`${BACKEND}/api/agents/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
         body: JSON.stringify({ content: node.content }),
       });
       if (resp.ok) {
@@ -93,7 +94,7 @@ export default function App() {
 
   const handleDeleteNode = useCallback(async (nodeId) => {
     try {
-      await fetch(`${BACKEND}/api/thoughts/${nodeId}`, { method: "DELETE" });
+      await fetch(`${BACKEND}/api/thoughts/${nodeId}`, { method: "DELETE", headers: API_HEADERS });
       setSelectedNode(null);
       await Promise.all([fetchGraph(), fetchStats(), fetchTimeline()]);
     } catch (err) {

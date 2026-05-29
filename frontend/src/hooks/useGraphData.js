@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const API_HEADERS = { "X-API-Key": process.env.REACT_APP_API_KEY || "" };
 
 const devLog = (msg, err) => {
   if (process.env.NODE_ENV === "development") console.error(msg, err);
@@ -16,7 +17,7 @@ export function useGraphData() {
 
   const fetchGraph = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/graph`);
+      const res = await fetch(`${BACKEND}/api/graph`, { headers: API_HEADERS });
       if (res.ok) {
         const { nodes: n, links: l } = await res.json();
         setNodes(n);
@@ -30,7 +31,7 @@ export function useGraphData() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/stats`);
+      const res = await fetch(`${BACKEND}/api/stats`, { headers: API_HEADERS });
       if (res.ok) setStats(await res.json());
     } catch (err) {
       devLog("fetchStats error:", err);
@@ -39,7 +40,7 @@ export function useGraphData() {
 
   const fetchTimeline = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/timeline`);
+      const res = await fetch(`${BACKEND}/api/timeline`, { headers: API_HEADERS });
       if (res.ok) {
         const { entries } = await res.json();
         setTimelineEntries(entries);
