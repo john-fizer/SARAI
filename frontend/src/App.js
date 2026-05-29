@@ -9,6 +9,7 @@ import ThoughtInput from "./components/ThoughtInput";
 import AgentChamber from "./components/AgentChamber";
 import CognitiveTimeline from "./components/CognitiveTimeline";
 import NodeDetail from "./components/NodeDetail";
+import RecursiveDashboard from "./components/RecursiveDashboard";
 import JarvisVoice from "./components/JarvisVoice";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -209,8 +210,9 @@ export default function App() {
           >
             <div className="flex border-b border-[#1E293B] shrink-0">
               {[
-                { id: "agents", icon: <Cpu size={11} />, label: "Agents" },
-                { id: "timeline", icon: <Clock size={11} />, label: "Timeline" },
+                { id: "agents",    icon: <Cpu size={11} />,     label: "Agents" },
+                { id: "timeline",  icon: <Clock size={11} />,    label: "Timeline" },
+                { id: "dashboard", icon: <Activity size={11} />, label: "Insight" },
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -231,7 +233,7 @@ export default function App() {
             <div className="flex-1 overflow-hidden p-3">
               {activeTab === "agents" ? (
                 <AgentChamber agentOutputs={agentOutputs} isProcessing={isProcessing} activeAgent={null} />
-              ) : (
+              ) : activeTab === "timeline" ? (
                 <div className="h-full overflow-y-auto scroll-cyber">
                   <CognitiveTimeline
                     entries={timelineEntries}
@@ -239,6 +241,8 @@ export default function App() {
                     selectedId={selectedNode?.id}
                   />
                 </div>
+              ) : (
+                <RecursiveDashboard nodes={nodes} stats={stats} />
               )}
             </div>
           </motion.aside>
