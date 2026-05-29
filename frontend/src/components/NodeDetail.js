@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Zap, Brain, MessageSquare, Trash2, Link2 } from "lucide-react";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const API_HEADERS = { "X-API-Key": process.env.REACT_APP_API_KEY || "" };
 const devLog = (msg, err) => { if (process.env.NODE_ENV === "development") console.error(msg, err); };
 
 const TYPE_COLORS = {
@@ -19,6 +20,8 @@ const AGENT_COLORS = {
   memory_curator: "#10B981",
   skeptic: "#F59E0B",
   emotional: "#8B5CF6",
+  identity_stabilizer: "#EC4899",
+  execution: "#F97316",
 };
 
 // Stable animation configs
@@ -53,7 +56,7 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
     try {
       const resp = await fetch(`${BACKEND}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
         body: JSON.stringify({ message: msg, session_id: sessionId, node_id: node.id }),
       });
       if (resp.ok) {
@@ -103,6 +106,39 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
           </button>
         </div>
       </div>
+
+      {/* Reflection */}
+      {node.reflection?.evaluation && (
+        <div className="glass-panel rounded-xl p-3" style={{ borderColor: "#8B5CF640" }} data-testid="node-reflection">
+          <div className="text-[10px] font-body text-[#8B5CF6] tracking-widest uppercase mb-2">Reflection</div>
+          {node.reflection.confidence !== undefined && (
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] font-body text-[#64748B]">Confidence</span>
+              <div className="flex-1 h-1 rounded-full bg-[#1E293B] overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.round((node.reflection.confidence || 0) * 100)}%`,
+                    background: node.reflection.confidence > 0.7 ? "#10B981" : node.reflection.confidence > 0.4 ? "#F59E0B" : "#EF4444",
+                  }}
+                />
+              </div>
+              <span className="text-[10px] font-body text-[#94A3B8]">{Math.round((node.reflection.confidence || 0) * 100)}%</span>
+            </div>
+          )}
+          {node.reflection.contradictions?.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[9px] font-body text-[#EF4444] uppercase tracking-widest mb-1">Contradictions</div>
+              {node.reflection.contradictions.slice(0, 2).map((c, i) => (
+                <p key={i} className="text-[10px] font-body text-[#64748B] leading-relaxed">· {c}</p>
+              ))}
+            </div>
+          )}
+          {node.reflection.revision && (
+            <p className="text-[11px] font-body text-[#94A3B8] leading-relaxed italic">"{node.reflection.revision}"</p>
+          )}
+        </div>
+      )}
 
       {/* Concepts */}
       {node.concepts?.length > 0 && (
