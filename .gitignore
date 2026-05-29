@@ -7,3 +7,14 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# RuFlo runtime state
+.swarm/
+ruvector.db
+.claude/memory.db
+.claude-flow/daemon.pid
+.claude-flow/daemon-state.json
+.claude-flow/swarm/
+
+# Database files
+*.db

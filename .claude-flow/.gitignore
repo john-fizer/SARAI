@@ -5,3 +5,7 @@ sessions/
 neural/
 *.log
 *.tmp
+daemon.pid
+daemon-state.json
+swarm/
+metrics/codebase-map.json
