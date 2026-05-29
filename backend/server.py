@@ -969,6 +969,85 @@ async def get_graph_clusters(_auth=Depends(_check_api_key)):
         return {"clusters": {}, "cluster_count": 0}
 
 
+@app.post("/api/agents/debate")
+async def debate_agents(thought: ThoughtInput, _auth=Depends(_check_api_key)):
+    """
+    Multi-agent debate: agents see each other's initial positions and write
+    a follow-up response challenging or building on the other agents' views.
+    Returns initial positions + follow-up rebuttals.
+    """
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+    # Round 1 — each agent states their initial position
+    async def initial_position(agent_key: str, cfg: dict) -> tuple:
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"debate-r1-{agent_key}-{datetime.now(timezone.utc).timestamp()}",
+            system_message=cfg["system"],
+        ).with_model(cfg["provider"], cfg["model"])
+        resp = await chat.send_message(
+            UserMessage(text=f'State your position on: "{thought.content}" in 1-2 sentences.')
+        )
+        return agent_key, resp
+
+    round1_tasks = [initial_position(k, v) for k, v in AGENTS.items()]
+    round1_results = await asyncio.gather(*round1_tasks, return_exceptions=True)
+
+    positions = {}
+    for r in round1_results:
+        if isinstance(r, tuple):
+            key, output = r
+            positions[key] = output
+
+    # Build the debate context (all other agents' positions)
+    def build_context(exclude_key: str) -> str:
+        others = [
+            f"- {AGENTS[k]['name']}: {v}"
+            for k, v in positions.items()
+            if k != exclude_key and v
+        ]
+        return "\n".join(others)
+
+    # Round 2 — each agent responds to the others
+    async def rebuttal(agent_key: str, cfg: dict) -> tuple:
+        context = build_context(agent_key)
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"debate-r2-{agent_key}-{datetime.now(timezone.utc).timestamp()}",
+            system_message=cfg["system"],
+        ).with_model(cfg["provider"], cfg["model"])
+        prompt = (
+            f'The topic is: "{thought.content}"\n\n'
+            f'Other agents said:\n{context}\n\n'
+            f'In 1-2 sentences, challenge or build on their views from your perspective.'
+        )
+        resp = await chat.send_message(UserMessage(text=prompt))
+        return agent_key, resp
+
+    round2_tasks = [rebuttal(k, v) for k, v in AGENTS.items()]
+    round2_results = await asyncio.gather(*round2_tasks, return_exceptions=True)
+
+    rebuttals = {}
+    for r in round2_results:
+        if isinstance(r, tuple):
+            key, output = r
+            rebuttals[key] = output
+
+    # Compile debate output
+    debate = {
+        key: {
+            "name": AGENTS[key]["name"],
+            "color": AGENTS[key]["color"],
+            "position": positions.get(key, ""),
+            "rebuttal": rebuttals.get(key, ""),
+        }
+        for key in AGENTS
+        if positions.get(key) or rebuttals.get(key)
+    }
+
+    return {"debate": debate, "thought": thought.content, "rounds": 2}
+
+
 @app.delete("/api/thoughts/{thought_id}")
 async def delete_thought(thought_id: str, _auth=Depends(_check_api_key)):
     try:

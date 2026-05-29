@@ -10,6 +10,7 @@ import AgentChamber from "./components/AgentChamber";
 import CognitiveTimeline from "./components/CognitiveTimeline";
 import NodeDetail from "./components/NodeDetail";
 import RecursiveDashboard from "./components/RecursiveDashboard";
+import SearchBar from "./components/SearchBar";
 import SimulationPanel from "./components/SimulationPanel";
 import JarvisVoice from "./components/JarvisVoice";
 
@@ -44,6 +45,8 @@ export default function App() {
   const [simulationResult, setSimulationResult] = useState(null);
   const [simulationThought, setSimulationThought] = useState("");
   const ttsEnabledRef = useRef(ttsEnabled);
+  const [pathNodeIds, setPathNodeIds] = useState([]);
+  const [clusterMap, setClusterMap] = useState({});
 
   // Keep ref in sync so handleThoughtAdded closure always reads latest value
   const handleTtsToggle = useCallback(() => {
@@ -57,6 +60,7 @@ export default function App() {
     setActiveNodeId(data.id);
     setAgentOutputs({ synthesis: data.synthesis });
     await Promise.all([fetchGraph(), fetchStats(), fetchTimeline()]);
+    fetchClusters();
 
     if (ttsEnabledRef.current && data.synthesis) {
       try {
@@ -114,6 +118,33 @@ export default function App() {
   const handleCloseDetail = useCallback(() => {
     setSelectedNode(null);
     setNodeAgentOutputs({});
+  }, []);
+
+  const fetchClusters = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND}/api/graph/clusters`, { headers: API_HEADERS });
+      if (res.ok) {
+        const data = await res.json();
+        setClusterMap(data.clusters || {});
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleFindPath = useCallback(async (fromNode, toNode) => {
+    if (!fromNode?.id || !toNode?.id) return;
+    try {
+      const res = await fetch(
+        `${BACKEND}/api/graph/path?from_id=${fromNode.id}&to_id=${toNode.id}`,
+        { headers: API_HEADERS }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.found && data.path) {
+          setPathNodeIds(data.path.map((p) => p.id));
+          setTimeout(() => setPathNodeIds([]), 8000);
+        }
+      }
+    } catch (_) {}
   }, []);
 
   const handleSimulate = useCallback(async (node) => {
@@ -190,6 +221,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            <SearchBar onSelectNode={handleNodeSelect} nodes={nodes} />
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
@@ -280,6 +312,8 @@ export default function App() {
               selectedNode={selectedNode}
               onNodeSelect={handleNodeSelect}
               activeNodeId={activeNodeId}
+              pathNodeIds={pathNodeIds}
+              clusterMap={clusterMap}
             />
 
             <AnimatePresence>

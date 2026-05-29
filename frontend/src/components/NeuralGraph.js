@@ -55,6 +55,28 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
     ctx.shadowBlur = 0;
   });
 
+  // Draw path highlight edges
+  const pathIds = pathRef?.current || [];
+  if (pathIds.length > 1) {
+    for (let i = 0; i < pathIds.length - 1; i++) {
+      const fromNode = nds.find((n) => n.id === pathIds[i]);
+      const toNode = nds.find((n) => n.id === pathIds[i + 1]);
+      if (!fromNode?.x || !toNode?.x) continue;
+      ctx.beginPath();
+      ctx.moveTo(fromNode.x, fromNode.y);
+      ctx.lineTo(toNode.x, toNode.y);
+      ctx.strokeStyle = "#FFFFFF";
+      ctx.lineWidth = 2.5;
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = "#FFFFFF";
+      ctx.setLineDash([6, 4]);
+      ctx.lineDashOffset = -(ts * 0.05) % 10;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.shadowBlur = 0;
+    }
+  }
+
   // Spawn particles periodically
   if (lns.length > 0 && ts % 900 < 20) {
     const rl = lns[Math.floor(Math.random() * lns.length)];
@@ -92,6 +114,7 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
     const isSelected = selectedRef.current?.id === node.id;
     const isActive = activeRef.current === node.id;
     const isHovered = hoveredRef.current?.id === node.id;
+    const isOnPath = pathIds.includes(node.id);
     const r = isSelected ? 22 : isHovered ? 18 : 14;
 
     const glowR = isActive ? r + 30 : isSelected ? r + 20 : r + 10;
@@ -121,6 +144,17 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
     ctx.lineWidth = isSelected ? 2 : 1.5;
     ctx.stroke();
     ctx.shadowBlur = 0;
+
+    if (isOnPath) {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = "#FFFFFF";
+      ctx.lineWidth = 2;
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "#FFFFFF";
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
 
     if (isActive) {
       const pr = r + 8 + Math.sin(ts * 0.008) * 5;
