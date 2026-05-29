@@ -513,20 +513,52 @@ async def chat_endpoint(chat_input: ChatInput, _auth=Depends(_check_api_key)):
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     provider, model, agent_label = select_model(chat_input.message)
 
-    # Fetch context node
-    ctx_snippet = ""
+    # Semantic memory retrieval — pull top relevant memories from ChromaDB
+    memory_context = ""
+    try:
+        n_existing = _chroma_col.count()
+        if n_existing > 0:
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: _chroma_col.query(
+                    query_texts=[chat_input.message],
+                    n_results=min(5, n_existing),
+                )
+            )
+            ids = results.get("ids", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            dists = results.get("distances", [[]])[0]
+            relevant = [
+                m.get("summary", "") for rid, m, d in zip(ids, metas, dists)
+                if (1.0 - d) >= 0.3 and m.get("summary")
+            ]
+            if relevant:
+                memory_context = "\n\nRelevant memories from your knowledge graph:\n" + "\n".join(
+                    f"- {s}" for s in relevant
+                )
+    except Exception:
+        pass
+
+    # Explicit node context (if provided) appended after memory
+    node_context = ""
     if chat_input.node_id:
         try:
             node = await thoughts_col.find_one({"_id": ObjectId(chat_input.node_id)})
             if node:
-                ctx_snippet = f"\n\nContext node: \"{node.get('content')}\"\nConcepts: {', '.join(node.get('concepts', []))}"
+                node_context = f"\n\nFocused node: \"{node.get('content')}\"\nConcepts: {', '.join(node.get('concepts', []))}"
         except Exception:
             pass
 
     chat_obj = LlmChat(
         api_key=api_key,
         session_id=chat_input.session_id,
-        system_message=f"You are SARAI Jarvis 3.0 — a Synthetic Augmentation Recursive Artificial Intelligence and second-brain exocortex from 2070. Navigate the user's cognitive knowledge graph with intelligence and precision. Be concise, insightful, and slightly futuristic in tone.{ctx_snippet}",
+        system_message=(
+            "You are SARAI Jarvis 3.0 — a Synthetic Augmentation Recursive Artificial Intelligence "
+            "and second-brain exocortex from 2070. Navigate the user's cognitive knowledge graph with "
+            f"intelligence and precision. Be concise, insightful, and slightly futuristic in tone."
+            f"{memory_context}{node_context}"
+        ),
     ).with_model(provider, model)
 
     response = await chat_obj.send_message(UserMessage(text=chat_input.message))
