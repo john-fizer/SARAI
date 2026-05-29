@@ -137,6 +137,17 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
     ctx.fillStyle = aura;
     ctx.fill();
 
+    if (clusterColor && !isSelected) {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r + 3, 0, Math.PI * 2);
+      ctx.strokeStyle = clusterColor + "70";
+      ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 6;
+      ctx.shadowColor = clusterColor;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
     const core = ctx.createRadialGradient(node.x - r * 0.3, node.y - r * 0.3, 0, node.x, node.y, r);
     core.addColorStop(0, color + "FF");
     core.addColorStop(0.5, color + "CC");
@@ -190,7 +201,7 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
   });
 }
 
-const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, pathNodeIds }) => {
+const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, pathNodeIds, clusterMap }) => {
   const canvasRef = useRef(null);
   const simulationRef = useRef(null);
   const nodesRef = useRef([]);
@@ -201,12 +212,14 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
   const selectedRef = useRef(null);
   const activeRef = useRef(null);
   const pathRef = useRef([]);
+  const clusterMapRef = useRef({});
   const [tooltip, setTooltip] = useState(null);
 
   // Keep refs in sync with props
   useEffect(() => { selectedRef.current = selectedNode; }, [selectedNode]);
   useEffect(() => { activeRef.current = activeNodeId; }, [activeNodeId]);
   useEffect(() => { pathRef.current = pathNodeIds || []; }, [pathNodeIds]);
+  useEffect(() => { clusterMapRef.current = clusterMap || {}; }, [clusterMap]);
 
   // Init canvas + render loop — runs once on mount
   useEffect(() => {
@@ -234,7 +247,7 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
     simulationRef.current = sim;
 
     const loop = (ts) => {
-      renderFrame(ctx, canvas.width, canvas.height, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef);
+      renderFrame(ctx, canvas.width, canvas.height, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef, clusterMapRef);
       frameRef.current = requestAnimationFrame(loop);
     };
     frameRef.current = requestAnimationFrame(loop);
