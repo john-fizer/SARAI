@@ -75,6 +75,27 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
     }
   };
 
+  const runConsensus = async () => {
+    if (isConsensus) return;
+    setIsConsensus(true);
+    setConsensusResult(null);
+    try {
+      const resp = await fetch(`${BACKEND}/api/agents/consensus`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
+        body: JSON.stringify({ content: node.content }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setConsensusResult(data.consensus);
+      }
+    } catch (err) {
+      devLog("consensus error:", err);
+    } finally {
+      setIsConsensus(false);
+    }
+  };
+
   return (
     <motion.div {...PANEL_ANIM} className="flex flex-col h-full gap-3" data-testid="node-detail-panel">
       {/* Header */}
@@ -153,22 +174,47 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
         </div>
       )}
 
-      {/* Agent analysis button */}
-      <div className="flex gap-2">
+      {/* Agent analysis + consensus + simulate buttons */}
+      <div className="flex gap-1.5">
         <motion.button
           whileHover={ANALYZE_HOVER}
           whileTap={ANALYZE_TAP}
           onClick={() => onAnalyze(node)}
           disabled={isAnalyzing}
           data-testid="analyze-node-btn"
-          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-body transition-all duration-200 ${
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-body transition-all duration-200 ${
             isAnalyzing
               ? "bg-[#1E293B] text-[#475569]"
               : "bg-[#06B6D4]/10 text-[#06B6D4] border border-[#06B6D4]/30 hover:bg-[#06B6D4]/20"
           }`}
         >
-          <Brain size={12} className={isAnalyzing ? "animate-spin" : ""} />
-          {isAnalyzing ? "Agents thinking..." : "Run Agent Analysis"}
+          <Brain size={11} className={isAnalyzing ? "animate-spin" : ""} />
+          {isAnalyzing ? "Thinking..." : "Analyze"}
+        </motion.button>
+        <motion.button
+          whileHover={ANALYZE_HOVER}
+          whileTap={ANALYZE_TAP}
+          onClick={runConsensus}
+          disabled={isConsensus}
+          data-testid="consensus-node-btn"
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-body transition-all duration-200 ${
+            isConsensus
+              ? "bg-[#1E293B] text-[#475569]"
+              : "bg-[#3B82F6]/10 text-[#3B82F6] border border-[#3B82F6]/30 hover:bg-[#3B82F6]/20"
+          }`}
+        >
+          <Users size={11} className={isConsensus ? "animate-spin" : ""} />
+          {isConsensus ? "..." : "Consensus"}
+        </motion.button>
+        <motion.button
+          whileHover={ANALYZE_HOVER}
+          whileTap={ANALYZE_TAP}
+          onClick={() => onSimulate && onSimulate(node)}
+          data-testid="simulate-node-btn"
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-body bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 hover:bg-[#8B5CF6]/20 transition-all duration-200"
+        >
+          <GitBranch size={11} />
+          Simulate
         </motion.button>
       </div>
 
@@ -189,6 +235,33 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
                 </div>
               );
             })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Consensus result */}
+      <AnimatePresence>
+        {consensusResult && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="glass-panel rounded-xl p-3"
+            style={{ borderColor: "#3B82F640" }}
+            data-testid="consensus-result"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] font-body text-[#3B82F6] tracking-widest uppercase">Consensus</div>
+              {consensusResult.confidence !== undefined && (
+                <span className="text-[10px] font-body text-[#64748B]">
+                  {Math.round(consensusResult.confidence * 100)}% confidence
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] font-body text-[#94A3B8] leading-relaxed mb-2">{consensusResult.consensus}</p>
+            {consensusResult.dissent && (
+              <p className="text-[10px] font-body text-[#F59E0B] italic">↯ {consensusResult.dissent}</p>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

@@ -10,6 +10,7 @@ import AgentChamber from "./components/AgentChamber";
 import CognitiveTimeline from "./components/CognitiveTimeline";
 import NodeDetail from "./components/NodeDetail";
 import RecursiveDashboard from "./components/RecursiveDashboard";
+import SimulationPanel from "./components/SimulationPanel";
 import JarvisVoice from "./components/JarvisVoice";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -40,6 +41,8 @@ export default function App() {
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [audioB64, setAudioB64] = useState(null);
   const [activeTab, setActiveTab] = useState("agents");
+  const [simulationResult, setSimulationResult] = useState(null);
+  const [simulationThought, setSimulationThought] = useState("");
   const ttsEnabledRef = useRef(ttsEnabled);
 
   // Keep ref in sync so handleThoughtAdded closure always reads latest value
@@ -113,6 +116,23 @@ export default function App() {
     setNodeAgentOutputs({});
   }, []);
 
+  const handleSimulate = useCallback(async (node) => {
+    try {
+      const resp = await fetch(`${BACKEND}/api/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
+        body: JSON.stringify({ content: node.content }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setSimulationResult(data.scenarios);
+        setSimulationThought(node.content);
+      }
+    } catch (err) {
+      devLog("simulate error:", err);
+    }
+  }, []);
+
   const handleTimelineSelect = useCallback((entry) => {
     const node = nodes.find((n) => n.id === entry.id);
     if (node) setSelectedNode(node);
@@ -129,6 +149,11 @@ export default function App() {
       data-testid="app-root"
     >
       <ParallaxBackground />
+      <SimulationPanel
+        scenarios={simulationResult}
+        thought={simulationThought}
+        onClose={() => setSimulationResult(null)}
+      />
       {audioB64 && <JarvisVoice audioB64={audioB64} onEnd={() => setAudioB64(null)} />}
 
       <div className="relative z-10 flex flex-col h-full">
@@ -295,6 +320,7 @@ export default function App() {
                   agentOutputs={nodeAgentOutputs}
                   onDelete={handleDeleteNode}
                   graphLinks={links}
+                  onSimulate={handleSimulate}
                 />
               ) : (
                 <motion.div
