@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch, Swords, Map, TrendingUp } from "lucide-react";
+import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch, Swords, Map, TrendingUp, Route } from "lucide-react";
 import DebatePanel from "./DebatePanel";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -35,7 +35,7 @@ const ANALYZE_TAP = { scale: 0.98 };
 let msgCounter = 0;
 const makeId = () => `msg-${Date.now()}-${++msgCounter}`;
 
-const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks, onSimulate, onPlan, onPredict }) => {
+const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks, onSimulate, onPlan, onPredict, onFindPath, allNodes }) => {
   const [chatMsg, setChatMsg] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
@@ -44,6 +44,9 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
   const [isConsensus, setIsConsensus] = useState(false);
   const [debateResult, setDebateResult] = useState(null);
   const [isDebating, setIsDebating] = useState(false);
+  const [pathTarget, setPathTarget] = useState("");
+  const [pathResult, setPathResult] = useState(null);
+  const [isFindingPath, setIsFindingPath] = useState(false);
 
   const color = TYPE_COLORS[node.type] || "#06B6D4";
 
@@ -117,6 +120,27 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
       devLog("debate error:", err);
     } finally {
       setIsDebating(false);
+    }
+  };
+
+  const findPath = async () => {
+    if (!pathTarget || isFindingPath) return;
+    setIsFindingPath(true);
+    setPathResult(null);
+    try {
+      const resp = await fetch(
+        `${BACKEND}/api/graph/path?from_id=${node.id}&to_id=${pathTarget}`,
+        { headers: API_HEADERS }
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        setPathResult(data);
+        if (data.found && onFindPath) onFindPath(data.path.map((h) => h.id));
+      }
+    } catch (err) {
+      devLog("findPath error:", err);
+    } finally {
+      setIsFindingPath(false);
     }
   };
 
@@ -326,6 +350,49 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Find Path */}
+      {allNodes && allNodes.length > 1 && (
+        <div className="glass-panel rounded-xl p-3" style={{ borderColor: "#14B8A630" }} data-testid="find-path-section">
+          <div className="text-[10px] font-body text-[#14B8A6] tracking-widest uppercase mb-2 flex items-center gap-1">
+            <Route size={10} />
+            <span>Find Path To</span>
+          </div>
+          <div className="flex gap-1.5">
+            <select
+              value={pathTarget}
+              onChange={(e) => { setPathTarget(e.target.value); setPathResult(null); }}
+              className="flex-1 bg-[#0A0A0F] border border-[#1E293B] rounded-lg px-2 py-1.5 text-[11px] font-body text-[#94A3B8] outline-none focus:border-[#14B8A6]/40 transition-colors"
+              data-testid="path-target-select"
+            >
+              <option value="">Select node...</option>
+              {(allNodes || []).filter((n) => n.id !== node.id).map((n) => (
+                <option key={n.id} value={n.id}>{n.summary || n.content?.slice(0, 40)}</option>
+              ))}
+            </select>
+            <button
+              onClick={findPath}
+              disabled={!pathTarget || isFindingPath}
+              data-testid="find-path-btn"
+              className="px-2.5 py-1.5 rounded-lg text-xs bg-[#14B8A6]/10 text-[#14B8A6] border border-[#14B8A6]/30 hover:bg-[#14B8A6]/20 disabled:opacity-30 transition-all"
+            >
+              {isFindingPath ? "..." : <Route size={11} />}
+            </button>
+          </div>
+          {pathResult && (
+            <div className="mt-2 text-[10px] font-body" data-testid="path-result">
+              {pathResult.found ? (
+                <div>
+                  <span className="text-[#14B8A6]">{pathResult.length} hop{pathResult.length !== 1 ? "s" : ""}</span>
+                  <span className="text-[#475569]"> · {pathResult.path?.map((h) => h.summary || h.content?.slice(0,20)).join(" → ")}</span>
+                </div>
+              ) : (
+                <span className="text-[#475569]">No path found between these nodes</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Chat */}
       <div className="mt-auto">

@@ -407,6 +407,8 @@ export default function App() {
                   onSimulate={handleSimulate}
                   onPlan={handlePlan}
                   onPredict={handlePredict}
+                  onFindPath={(pathIds) => { setPathNodeIds(pathIds); setTimeout(() => setPathNodeIds([]), 8000); }}
+                  allNodes={nodes}
                 />
               ) : (
                 <motion.div
