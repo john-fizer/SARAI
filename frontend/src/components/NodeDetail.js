@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch, Swords } from "lucide-react";
+import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch, Swords, Map, TrendingUp } from "lucide-react";
 import DebatePanel from "./DebatePanel";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -35,7 +35,7 @@ const ANALYZE_TAP = { scale: 0.98 };
 let msgCounter = 0;
 const makeId = () => `msg-${Date.now()}-${++msgCounter}`;
 
-const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks, onSimulate }) => {
+const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks, onSimulate, onPlan, onPredict }) => {
   const [chatMsg, setChatMsg] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
@@ -254,6 +254,28 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
         >
           <Swords size={11} className={isDebating ? "animate-spin" : ""} />
           {isDebating ? "..." : "Debate"}
+        </motion.button>
+      </div>
+      <div className="flex gap-1.5">
+        <motion.button
+          whileHover={ANALYZE_HOVER}
+          whileTap={ANALYZE_TAP}
+          onClick={() => onPlan && onPlan(node)}
+          data-testid="plan-node-btn"
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-body bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30 hover:bg-[#10B981]/20 transition-all duration-200"
+        >
+          <Map size={11} />
+          Plan
+        </motion.button>
+        <motion.button
+          whileHover={ANALYZE_HOVER}
+          whileTap={ANALYZE_TAP}
+          onClick={() => onPredict && onPredict(node)}
+          data-testid="predict-node-btn"
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-body bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/30 hover:bg-[#F59E0B]/20 transition-all duration-200"
+        >
+          <TrendingUp size={11} />
+          Predict
         </motion.button>
       </div>
 

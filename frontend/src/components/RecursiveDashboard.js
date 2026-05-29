@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { motion } from "framer-motion";
-import { AlertOctagon, TrendingUp, Eye, Activity } from "lucide-react";
+import { AlertOctagon, TrendingUp, Eye, Activity, Sparkles } from "lucide-react";
 
 const Section = ({ icon, title, color, children }) => (
   <div className="mb-4">
@@ -21,7 +21,7 @@ const Tag = ({ label, color, count }) => (
   </div>
 );
 
-const RecursiveDashboard = ({ nodes, stats }) => {
+const RecursiveDashboard = ({ nodes, stats, onImprove, isImproving, improveResult }) => {
   const analysis = useMemo(() => {
     if (!nodes?.length) return null;
 
@@ -93,6 +93,33 @@ const RecursiveDashboard = ({ nodes, stats }) => {
             <span>{stats?.total_connections || 0} synapses</span>
           </div>
         </div>
+      </Section>
+
+      {/* Self-Improvement */}
+      <Section icon={<Sparkles size={11} />} title="Self-Improve" color="#8B5CF6">
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onImprove}
+          disabled={isImproving || !onImprove}
+          className={`w-full py-2 rounded-lg text-[10px] font-body tracking-widest uppercase transition-all duration-200 ${
+            isImproving
+              ? "bg-[#1E293B] text-[#475569]"
+              : "bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 hover:bg-[#8B5CF6]/20"
+          }`}
+          data-testid="self-improve-btn"
+        >
+          {isImproving ? "Analyzing..." : "Run Self-Analysis"}
+        </motion.button>
+        {improveResult?.recommendation && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="mt-2 glass-panel rounded-lg p-2.5" style={{ borderColor: "#8B5CF630" }}>
+            <div className="text-[9px] font-body text-[#8B5CF6] uppercase tracking-widest mb-1">Recommendation</div>
+            <p className="text-[10px] font-body text-[#94A3B8] leading-relaxed">{improveResult.recommendation}</p>
+            {improveResult.cognitive_health && (
+              <p className="text-[9px] font-body text-[#64748B] mt-1 italic">{improveResult.cognitive_health}</p>
+            )}
+          </motion.div>
+        )}
       </Section>
 
       {!analysis ? (

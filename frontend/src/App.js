@@ -12,6 +12,8 @@ import NodeDetail from "./components/NodeDetail";
 import RecursiveDashboard from "./components/RecursiveDashboard";
 import SearchBar from "./components/SearchBar";
 import SimulationPanel from "./components/SimulationPanel";
+import PlanPanel from "./components/PlanPanel";
+import PredictPanel from "./components/PredictPanel";
 import JarvisVoice from "./components/JarvisVoice";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -44,6 +46,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("agents");
   const [simulationResult, setSimulationResult] = useState(null);
   const [simulationThought, setSimulationThought] = useState("");
+  const [planResult, setPlanResult] = useState(null);
+  const [predictResult, setPredictResult] = useState(null);
+  const [improveResult, setImproveResult] = useState(null);
+  const [isImproving, setIsImproving] = useState(false);
   const ttsEnabledRef = useRef(ttsEnabled);
   const [pathNodeIds, setPathNodeIds] = useState([]);
   const [clusterMap, setClusterMap] = useState({});
@@ -164,6 +170,38 @@ export default function App() {
     }
   }, []);
 
+  const handlePlan = useCallback(async (node) => {
+    try {
+      const res = await fetch(`${BACKEND}/api/plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
+        body: JSON.stringify({ content: node.content }),
+      });
+      if (res.ok) { const d = await res.json(); setPlanResult(d); }
+    } catch (_) {}
+  }, []);
+
+  const handlePredict = useCallback(async (node) => {
+    try {
+      const res = await fetch(`${BACKEND}/api/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
+        body: JSON.stringify({ content: node.content }),
+      });
+      if (res.ok) { const d = await res.json(); setPredictResult(d); }
+    } catch (_) {}
+  }, []);
+
+  const handleImprove = useCallback(async () => {
+    if (isImproving) return;
+    setIsImproving(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/reflect/improve`, { headers: API_HEADERS });
+      if (res.ok) { const d = await res.json(); setImproveResult(d); }
+    } catch (_) {}
+    finally { setIsImproving(false); }
+  }, [isImproving]);
+
   const handleTimelineSelect = useCallback((entry) => {
     const node = nodes.find((n) => n.id === entry.id);
     if (node) setSelectedNode(node);
@@ -185,6 +223,12 @@ export default function App() {
         thought={simulationThought}
         onClose={() => setSimulationResult(null)}
       />
+      {planResult && (
+        <PlanPanel plan={planResult.plan} thought={planResult.thought} onClose={() => setPlanResult(null)} />
+      )}
+      {predictResult && (
+        <PredictPanel result={predictResult} thought={predictResult.thought} onClose={() => setPredictResult(null)} />
+      )}
       {audioB64 && <JarvisVoice audioB64={audioB64} onEnd={() => setAudioB64(null)} />}
 
       <div className="relative z-10 flex flex-col h-full">
@@ -299,7 +343,13 @@ export default function App() {
                   />
                 </div>
               ) : (
-                <RecursiveDashboard nodes={nodes} stats={stats} />
+                <RecursiveDashboard
+                  nodes={nodes}
+                  stats={stats}
+                  onImprove={handleImprove}
+                  isImproving={isImproving}
+                  improveResult={improveResult}
+                />
               )}
             </div>
           </motion.aside>
@@ -355,6 +405,8 @@ export default function App() {
                   onDelete={handleDeleteNode}
                   graphLinks={links}
                   onSimulate={handleSimulate}
+                  onPlan={handlePlan}
+                  onPredict={handlePredict}
                 />
               ) : (
                 <motion.div
