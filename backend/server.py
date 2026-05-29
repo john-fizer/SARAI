@@ -825,6 +825,150 @@ async def graph_path(from_id: str, to_id: str, _auth=Depends(_check_api_key)):
     return {"path": path_nodes, "found": True, "length": len(path) - 1}
 
 
+@app.get("/api/export")
+async def export_knowledge(_auth=Depends(_check_api_key)):
+    """Export the full knowledge graph as structured JSON."""
+    thoughts = await thoughts_col.find({}).to_list(1000)
+    connections = await connections_col.find({}).to_list(5000)
+    return {
+        "version": "1.0",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "nodes": [
+            {
+                "id": str(t["_id"]),
+                "content": t.get("content", ""),
+                "type": t.get("type", "idea"),
+                "concepts": t.get("concepts", []),
+                "entities": t.get("entities", []),
+                "emotional_weight": t.get("emotional_weight", 0.5),
+                "summary": t.get("summary", ""),
+                "created_at": t.get("created_at", datetime.now(timezone.utc)).isoformat(),
+                "reflection": t.get("reflection", {}),
+            }
+            for t in thoughts
+        ],
+        "edges": [
+            {
+                "id": str(c["_id"]),
+                "source": c.get("source", ""),
+                "target": c.get("target", ""),
+                "relationship": c.get("relationship", ""),
+                "strength": c.get("strength", 0.5),
+            }
+            for c in connections
+        ],
+        "stats": {
+            "total_nodes": len(thoughts),
+            "total_edges": len(connections),
+        },
+    }
+
+
+@app.get("/api/search")
+async def search_thoughts(q: str, limit: int = 20, _auth=Depends(_check_api_key)):
+    """Unified search: combines semantic (ChromaDB) and keyword (MongoDB regex) results."""
+    results = []
+    seen_ids = set()
+
+    # Semantic search via ChromaDB
+    try:
+        n_existing = _chroma_col.count()
+        if n_existing > 0:
+            loop = asyncio.get_event_loop()
+            chroma_results = await loop.run_in_executor(
+                None,
+                lambda: _chroma_col.query(query_texts=[q], n_results=min(10, n_existing))
+            )
+            ids = chroma_results.get("ids", [[]])[0]
+            distances = chroma_results.get("distances", [[]])[0]
+            for rid, dist in zip(ids, distances):
+                similarity = round(1.0 - dist, 3)
+                if similarity >= 0.25 and rid not in seen_ids:
+                    seen_ids.add(rid)
+                    results.append({"id": rid, "score": similarity, "match_type": "semantic"})
+    except Exception:
+        pass
+
+    # Keyword search via MongoDB regex
+    try:
+        regex = {"$regex": q, "$options": "i"}
+        cursor = thoughts_col.find(
+            {"$or": [{"content": regex}, {"concepts": regex}, {"summary": regex}]},
+            {"_id": 1, "content": 1, "summary": 1, "type": 1, "concepts": 1}
+        ).limit(limit)
+        async for doc in cursor:
+            doc_id = str(doc["_id"])
+            if doc_id not in seen_ids:
+                seen_ids.add(doc_id)
+                results.append({
+                    "id": doc_id,
+                    "content": doc.get("content", ""),
+                    "summary": doc.get("summary", ""),
+                    "type": doc.get("type", "idea"),
+                    "concepts": doc.get("concepts", []),
+                    "score": 0.5,
+                    "match_type": "keyword",
+                })
+    except Exception:
+        pass
+
+    # Enrich semantic results with MongoDB data
+    enriched = []
+    for r in results[:limit]:
+        if r.get("match_type") == "semantic" and "content" not in r:
+            try:
+                from bson import ObjectId as ObjId
+                doc = await thoughts_col.find_one({"_id": ObjId(r["id"])})
+                if doc:
+                    r.update({
+                        "content": doc.get("content", ""),
+                        "summary": doc.get("summary", ""),
+                        "type": doc.get("type", "idea"),
+                        "concepts": doc.get("concepts", []),
+                    })
+            except Exception:
+                pass
+        enriched.append(r)
+
+    enriched.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return {"results": enriched[:limit], "query": q}
+
+
+@app.get("/api/graph/clusters")
+async def get_graph_clusters(_auth=Depends(_check_api_key)):
+    """Detect communities in the knowledge graph using NetworkX."""
+    connections = await connections_col.find({}, {"source": 1, "target": 1, "strength": 1}).to_list(5000)
+    if not connections:
+        return {"clusters": {}, "cluster_count": 0}
+
+    G = nx.Graph()
+    for c in connections:
+        src, tgt = c.get("source"), c.get("target")
+        if src and tgt:
+            G.add_edge(src, tgt, weight=c.get("strength", 0.5))
+
+    # Greedy modularity community detection
+    try:
+        from networkx.algorithms.community import greedy_modularity_communities
+        communities = list(greedy_modularity_communities(G))
+        cluster_map = {}
+        for i, community in enumerate(communities):
+            for node_id in community:
+                cluster_map[node_id] = i
+        # Nodes with no connections get cluster -1
+        all_thoughts = await thoughts_col.find({}, {"_id": 1}).to_list(1000)
+        for t in all_thoughts:
+            tid = str(t["_id"])
+            if tid not in cluster_map:
+                cluster_map[tid] = -1
+        return {
+            "clusters": cluster_map,
+            "cluster_count": len(communities),
+        }
+    except Exception:
+        return {"clusters": {}, "cluster_count": 0}
+
+
 @app.delete("/api/thoughts/{thought_id}")
 async def delete_thought(thought_id: str, _auth=Depends(_check_api_key)):
     try:

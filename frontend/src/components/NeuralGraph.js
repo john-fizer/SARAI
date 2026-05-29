@@ -17,7 +17,7 @@ const EMPTY_ANIM = {
 const TOOLTIP_ANIM = { initial: { opacity: 0, y: 5 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 } };
 
 // ── Pure render function (no hooks, stable reference) ────────────────────────
-function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef) {
+function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef) {
   ctx.clearRect(0, 0, w, h);
 
   // Grid dots
@@ -146,7 +146,7 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
   });
 }
 
-const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId }) => {
+const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, pathNodeIds }) => {
   const canvasRef = useRef(null);
   const simulationRef = useRef(null);
   const nodesRef = useRef([]);
@@ -156,11 +156,13 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId })
   const frameRef = useRef(null);
   const selectedRef = useRef(null);
   const activeRef = useRef(null);
+  const pathRef = useRef([]);
   const [tooltip, setTooltip] = useState(null);
 
   // Keep refs in sync with props
   useEffect(() => { selectedRef.current = selectedNode; }, [selectedNode]);
   useEffect(() => { activeRef.current = activeNodeId; }, [activeNodeId]);
+  useEffect(() => { pathRef.current = pathNodeIds || []; }, [pathNodeIds]);
 
   // Init canvas + render loop — runs once on mount
   useEffect(() => {
@@ -188,7 +190,7 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId })
     simulationRef.current = sim;
 
     const loop = (ts) => {
-      renderFrame(ctx, canvas.width, canvas.height, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef);
+      renderFrame(ctx, canvas.width, canvas.height, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef);
       frameRef.current = requestAnimationFrame(loop);
     };
     frameRef.current = requestAnimationFrame(loop);
