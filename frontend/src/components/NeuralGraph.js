@@ -9,6 +9,12 @@ const NODE_COLORS = {
   memory: "#10B981",
 };
 
+const CLUSTER_PALETTE = [
+  "#06B6D4", "#8B5CF6", "#F59E0B", "#10B981",
+  "#EC4899", "#F97316", "#3B82F6", "#14B8A6",
+  "#A855F7", "#84CC16",
+];
+
 // Stable animation configs
 const EMPTY_ANIM = {
   animate: { opacity: [0.3, 0.7, 0.3], scale: [0.98, 1.02, 0.98] },
@@ -17,7 +23,7 @@ const EMPTY_ANIM = {
 const TOOLTIP_ANIM = { initial: { opacity: 0, y: 5 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 } };
 
 // ── Pure render function (no hooks, stable reference) ────────────────────────
-function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef) {
+function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef, clusterMapRef) {
   ctx.clearRect(0, 0, w, h);
 
   // Grid dots
@@ -115,6 +121,10 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
     const isActive = activeRef.current === node.id;
     const isHovered = hoveredRef.current?.id === node.id;
     const isOnPath = pathIds.includes(node.id);
+    const clusterIdx = clusterMapRef?.current?.[node.id];
+    const clusterColor = (clusterIdx !== undefined && clusterIdx >= 0)
+      ? CLUSTER_PALETTE[clusterIdx % CLUSTER_PALETTE.length]
+      : null;
     const r = isSelected ? 22 : isHovered ? 18 : 14;
 
     const glowR = isActive ? r + 30 : isSelected ? r + 20 : r + 10;

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch } from "lucide-react";
+import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch, Swords } from "lucide-react";
+import DebatePanel from "./DebatePanel";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const API_HEADERS = { "X-API-Key": process.env.REACT_APP_API_KEY || "" };
@@ -41,6 +42,8 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
   const [sessionId] = useState(`node-chat-${node.id}`);
   const [consensusResult, setConsensusResult] = useState(null);
   const [isConsensus, setIsConsensus] = useState(false);
+  const [debateResult, setDebateResult] = useState(null);
+  const [isDebating, setIsDebating] = useState(false);
 
   const color = TYPE_COLORS[node.type] || "#06B6D4";
 
@@ -93,6 +96,27 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
       devLog("consensus error:", err);
     } finally {
       setIsConsensus(false);
+    }
+  };
+
+  const runDebate = async () => {
+    if (isDebating) return;
+    setIsDebating(true);
+    setDebateResult(null);
+    try {
+      const resp = await fetch(`${BACKEND}/api/agents/debate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
+        body: JSON.stringify({ content: node.content }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setDebateResult(data);
+      }
+    } catch (err) {
+      devLog("debate error:", err);
+    } finally {
+      setIsDebating(false);
     }
   };
 
@@ -216,6 +240,21 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
           <GitBranch size={11} />
           Simulate
         </motion.button>
+        <motion.button
+          whileHover={ANALYZE_HOVER}
+          whileTap={ANALYZE_TAP}
+          onClick={runDebate}
+          disabled={isDebating}
+          data-testid="debate-node-btn"
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-body transition-all duration-200 ${
+            isDebating
+              ? "bg-[#1E293B] text-[#475569]"
+              : "bg-[#EF4444]/10 text-[#EF4444] border border-[#EF4444]/30 hover:bg-[#EF4444]/20"
+          }`}
+        >
+          <Swords size={11} className={isDebating ? "animate-spin" : ""} />
+          {isDebating ? "..." : "Debate"}
+        </motion.button>
       </div>
 
       {/* Agent outputs */}
@@ -316,6 +355,13 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
           </button>
         </div>
       </div>
+      {debateResult && (
+        <DebatePanel
+          debate={debateResult.debate}
+          thought={debateResult.thought}
+          onClose={() => setDebateResult(null)}
+        />
+      )}
     </motion.div>
   );
 };
