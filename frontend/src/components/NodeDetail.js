@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch, Swords, Map, TrendingUp, Route } from "lucide-react";
+import { X, Zap, Brain, MessageSquare, Trash2, Link2, Users, GitBranch, Swords, Map, TrendingUp, Route, Pencil, Check } from "lucide-react";
 import DebatePanel from "./DebatePanel";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -35,11 +35,14 @@ const ANALYZE_TAP = { scale: 0.98 };
 let msgCounter = 0;
 const makeId = () => `msg-${Date.now()}-${++msgCounter}`;
 
-const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks, onSimulate, onPlan, onPredict, onFindPath, allNodes }) => {
+const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDelete, graphLinks, onSimulate, onPlan, onPredict, onFindPath, allNodes, onUpdate }) => {
   const [chatMsg, setChatMsg] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [sessionId] = useState(`node-chat-${node.id}`);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(node.content);
+  const [editType, setEditType] = useState(node.type);
   const [consensusResult, setConsensusResult] = useState(null);
   const [isConsensus, setIsConsensus] = useState(false);
   const [debateResult, setDebateResult] = useState(null);
@@ -48,7 +51,40 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
   const [pathResult, setPathResult] = useState(null);
   const [isFindingPath, setIsFindingPath] = useState(false);
 
-  const color = TYPE_COLORS[node.type] || "#06B6D4";
+  useEffect(() => {
+    const loadChat = async () => {
+      try {
+        const resp = await fetch(`${BACKEND}/api/thoughts/${node.id}/chat`, { headers: API_HEADERS });
+        if (resp.ok) {
+          const data = await resp.json();
+          setChatHistory((data.messages || []).map((m) => ({ ...m, id: makeId() })));
+        }
+      } catch (err) {
+        devLog("loadChat error:", err);
+      }
+    };
+    loadChat();
+  }, [node.id]);
+
+  const saveEdit = async () => {
+    if (!editContent.trim()) return;
+    try {
+      const resp = await fetch(`${BACKEND}/api/thoughts/${node.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
+        body: JSON.stringify({ content: editContent, type: editType }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setIsEditing(false);
+        if (onUpdate) onUpdate({ ...node, content: editContent, type: editType, concepts: data.concepts || node.concepts });
+      }
+    } catch (err) {
+      devLog("saveEdit error:", err);
+    }
+  };
+
+  const color = TYPE_COLORS[isEditing ? editType : node.type] || "#06B6D4";
 
   const connectionCount = graphLinks?.filter(
     (l) => l.source === node.id || l.target === node.id ||
@@ -73,6 +109,18 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
           ...prev,
           { role: "sarai", text: data.response, model: data.model_used, agent: data.agent, id: makeId() },
         ]);
+        // Persist both turns
+        const saveMsg = async (role, text, model, agent) => {
+          try {
+            await fetch(`${BACKEND}/api/thoughts/${node.id}/chat`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...API_HEADERS },
+              body: JSON.stringify({ role, text, model: model || null, agent: agent || null }),
+            });
+          } catch (e) { devLog("persist chat error:", e); }
+        };
+        await saveMsg("user", msg, null, null);
+        await saveMsg("sarai", data.response, data.model_used, data.agent);
       }
     } catch (err) {
       devLog("sendChat error:", err);
@@ -157,24 +205,66 @@ const NodeDetail = ({ node, onClose, onAnalyze, isAnalyzing, agentOutputs, onDel
           style={{ background: color + "15", color, border: `1px solid ${color}30` }}
         >
           <div className="w-1 h-1 rounded-full" style={{ background: color }} />
-          {node.type}
+          {isEditing ? editType : node.type}
         </div>
 
-        <p className="text-sm font-body text-[#F8FAFC] leading-relaxed pr-4">{node.content}</p>
+        {isEditing ? (
+          <div className="pr-4">
+            <textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              rows={3}
+              autoFocus
+              className="w-full bg-[#0A0A0F] border border-[#06B6D4]/40 rounded-lg px-2 py-1.5 text-sm font-body text-[#F8FAFC] outline-none resize-none focus:border-[#06B6D4]/70 transition-colors"
+              data-testid="edit-node-textarea"
+            />
+            <div className="flex gap-1 mt-1.5 flex-wrap">
+              {["idea", "question", "insight", "memory"].map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setEditType(t)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-body border transition-all ${
+                    editType === t
+                      ? "bg-[#06B6D4]/20 text-[#06B6D4] border-[#06B6D4]/40"
+                      : "text-[#475569] border-[#1E293B] hover:text-[#94A3B8]"
+                  }`}
+                >{t}</button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm font-body text-[#F8FAFC] leading-relaxed pr-4">{node.content}</p>
+        )}
 
         <div className="flex items-center gap-3 mt-2">
           <div className="flex items-center gap-1 text-[10px] font-body text-[#475569]">
             <Link2 size={10} />
             <span>{connectionCount} links</span>
           </div>
-          {node.model_used && (
+          {node.model_used && !isEditing && (
             <div className="text-[10px] font-body text-[#334155] truncate">
               via {node.model_used?.split("/")[1] || node.model_used}
             </div>
           )}
-          <button onClick={() => onDelete(node.id)} className="ml-auto text-[#334155] hover:text-red-400 transition-colors" data-testid="delete-node-btn">
-            <Trash2 size={11} />
-          </button>
+          {isEditing ? (
+            <div className="ml-auto flex gap-1.5">
+              <button onClick={saveEdit} className="text-[#10B981] hover:text-[#34D399] transition-colors" data-testid="save-edit-btn">
+                <Check size={12} />
+              </button>
+              <button onClick={() => { setIsEditing(false); setEditContent(node.content); setEditType(node.type); }} className="text-[#475569] hover:text-[#94A3B8] transition-colors" data-testid="cancel-edit-btn">
+                <X size={12} />
+              </button>
+            </div>
+          ) : (
+            <div className="ml-auto flex gap-2">
+              <button onClick={() => { setIsEditing(true); setEditContent(node.content); setEditType(node.type); }} className="text-[#334155] hover:text-[#06B6D4] transition-colors" data-testid="edit-node-btn">
+                <Pencil size={11} />
+              </button>
+              <button onClick={() => onDelete(node.id)} className="text-[#334155] hover:text-red-400 transition-colors" data-testid="delete-node-btn">
+                <Trash2 size={11} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

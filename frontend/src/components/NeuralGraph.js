@@ -23,7 +23,7 @@ const EMPTY_ANIM = {
 const TOOLTIP_ANIM = { initial: { opacity: 0, y: 5 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 } };
 
 // ── Pure render function (no hooks, stable reference) ────────────────────────
-function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef, clusterMapRef) {
+function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef, clusterMapRef, connSourceRef, mousePosRef) {
   ctx.clearRect(0, 0, w, h);
 
   // Grid dots
@@ -81,6 +81,24 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
       ctx.setLineDash([]);
       ctx.shadowBlur = 0;
     }
+  }
+
+  // Draw pending manual connection line
+  const connSrc = connSourceRef?.current;
+  const mp = mousePosRef?.current;
+  if (connSrc?.x && mp) {
+    ctx.beginPath();
+    ctx.moveTo(connSrc.x, connSrc.y);
+    ctx.lineTo(mp.x, mp.y);
+    ctx.strokeStyle = "#06B6D4";
+    ctx.lineWidth = 1.5;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = "#06B6D4";
+    ctx.setLineDash([5, 5]);
+    ctx.lineDashOffset = -(ts * 0.06) % 10;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
   }
 
   // Spawn particles periodically
@@ -201,7 +219,7 @@ function renderFrame(ctx, w, h, ts, linksRef, nodesRef, particlesRef, selectedRe
   });
 }
 
-const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, pathNodeIds, clusterMap }) => {
+const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, pathNodeIds, clusterMap, onCreateConnection }) => {
   const canvasRef = useRef(null);
   const simulationRef = useRef(null);
   const nodesRef = useRef([]);
@@ -213,7 +231,10 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
   const activeRef = useRef(null);
   const pathRef = useRef([]);
   const clusterMapRef = useRef({});
+  const connSourceRef = useRef(null);
+  const mousePosRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
+  const [connectSource, setConnectSource] = useState(null);
 
   // Keep refs in sync with props
   useEffect(() => { selectedRef.current = selectedNode; }, [selectedNode]);
@@ -247,7 +268,7 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
     simulationRef.current = sim;
 
     const loop = (ts) => {
-      renderFrame(ctx, canvas.width, canvas.height, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef, clusterMapRef);
+      renderFrame(ctx, canvas.width, canvas.height, ts, linksRef, nodesRef, particlesRef, selectedRef, activeRef, hoveredRef, pathRef, clusterMapRef, connSourceRef, mousePosRef);
       frameRef.current = requestAnimationFrame(loop);
     };
     frameRef.current = requestAnimationFrame(loop);
@@ -288,9 +309,14 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
+    mousePosRef.current = { x: mx, y: my };
     const found = nodesRef.current.find((n) => n.x && n.y && Math.hypot(n.x - mx, n.y - my) < 22);
     hoveredRef.current = found || null;
-    canvas.style.cursor = found ? "pointer" : "default";
+    if (connSourceRef.current) {
+      canvas.style.cursor = found && found.id !== connSourceRef.current.id ? "cell" : "crosshair";
+    } else {
+      canvas.style.cursor = found ? "pointer" : "default";
+    }
     if (found) {
       setTooltip({ node: found, x: e.clientX, y: e.clientY });
     } else {
@@ -306,8 +332,17 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     const clicked = nodesRef.current.find((n) => n.x && n.y && Math.hypot(n.x - mx, n.y - my) < 22);
+    if (connSourceRef.current) {
+      if (clicked && clicked.id !== connSourceRef.current.id) {
+        if (onCreateConnection) onCreateConnection(connSourceRef.current.id, clicked.id);
+      }
+      connSourceRef.current = null;
+      setConnectSource(null);
+      canvas.style.cursor = "default";
+      return;
+    }
     if (clicked) onNodeSelect(clicked);
-  }, [onNodeSelect]);
+  }, [onNodeSelect, onCreateConnection]);
 
   // Drag — runs once, reads simulation via ref
   useEffect(() => {
@@ -342,13 +377,36 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
       dragging = null;
     };
 
+    const onContextMenu = (e) => {
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      const node = getNode(e.clientX - r.left, e.clientY - r.top);
+      if (node) {
+        connSourceRef.current = node;
+        setConnectSource(node);
+        canvas.style.cursor = "crosshair";
+      }
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape" && connSourceRef.current) {
+        connSourceRef.current = null;
+        setConnectSource(null);
+        canvas.style.cursor = "default";
+      }
+    };
+
     canvas.addEventListener("mousedown", onDown);
+    canvas.addEventListener("contextmenu", onContextMenu);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    window.addEventListener("keydown", onKeyDown);
     return () => {
       canvas.removeEventListener("mousedown", onDown);
+      canvas.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("keydown", onKeyDown);
     };
   }, []); // Intentionally empty — drag uses only refs (simulationRef, nodesRef)
 
@@ -390,6 +448,25 @@ const NeuralGraph = ({ nodes, links, selectedNode, onNodeSelect, activeNodeId, p
                 <span key={c} className="text-[10px] text-[#06B6D4] border border-[#06B6D4]/30 px-1 rounded">{c}</span>
               ))}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {connectSource && (
+          <motion.div
+            key="connect-badge"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="absolute top-3 left-1/2 -translate-x-1/2 glass-panel rounded-lg px-3 py-1.5 flex items-center gap-2 pointer-events-none z-10"
+            style={{ borderColor: "#06B6D480" }}
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-[#06B6D4] animate-pulse" />
+            <span className="text-[11px] font-body text-[#06B6D4]">
+              Connecting from <span className="text-[#F8FAFC]">{connectSource.content?.slice(0, 20)}…</span>
+            </span>
+            <span className="text-[10px] text-[#475569]">click target · ESC to cancel</span>
           </motion.div>
         )}
       </AnimatePresence>

@@ -166,6 +166,24 @@ class TTSInput(BaseModel):
     voice: Optional[str] = "onyx"
 
 
+class ImportInput(BaseModel):
+    text: str = Field(..., max_length=50000)
+    split_by: Optional[str] = "paragraph"
+
+
+class ChatMessage(BaseModel):
+    role: str
+    text: str = Field(..., max_length=4000)
+    model: Optional[str] = None
+    agent: Optional[str] = None
+
+
+class ManualConnectionInput(BaseModel):
+    source: str
+    target: str
+    relationship: Optional[str] = "manual connection"
+
+
 # ── Thought ingestion helpers ─────────────────────────────────────────────────
 
 async def _extract_concepts(content: str, fallback_type: str, api_key: str) -> dict:
@@ -1248,6 +1266,123 @@ Include 3 predictions ordered by probability descending."""
         result = {"predictions": [], "trajectory": raw[:200], "inflection_point": "", "blind_spot": ""}
 
     return {**result, "thought": thought.content}
+
+
+@app.patch("/api/thoughts/{thought_id}")
+async def update_thought(thought_id: str, thought: ThoughtInput, _auth=Depends(_check_api_key)):
+    try:
+        oid = ObjectId(thought_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid thought ID")
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    meta = await _extract_concepts(thought.content, thought.type, api_key)
+    await thoughts_col.update_one(
+        {"_id": oid},
+        {"$set": {
+            "content": thought.content,
+            "type": meta.get("type", thought.type),
+            "concepts": meta.get("concepts", []),
+            "entities": meta.get("entities", []),
+            "emotional_weight": float(meta.get("emotional_weight", 0.5)),
+            "summary": meta.get("summary", thought.content[:80]),
+            "updated_at": datetime.now(timezone.utc),
+        }}
+    )
+    await _upsert_embedding(thought_id, thought.content, meta)
+    return {"id": thought_id, "updated": True, "concepts": meta.get("concepts", [])}
+
+
+@app.post("/api/import")
+async def bulk_import(import_input: ImportInput, _auth=Depends(_check_api_key)):
+    """Import text/markdown as multiple thoughts, split by paragraph, line, or sentence."""
+    text = import_input.text.strip()
+    if import_input.split_by == "line":
+        chunks = [l.strip() for l in text.split("\n") if len(l.strip()) > 10]
+    elif import_input.split_by == "sentence":
+        chunks = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if len(s.strip()) > 15]
+    else:
+        chunks = [p.strip() for p in re.split(r"\n\s*\n", text) if len(p.strip()) > 10]
+    chunks = [c[:2000] for c in chunks[:50]]
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    imported = []
+    for chunk in chunks:
+        meta = await _extract_concepts(chunk, "memory", api_key)
+        doc = {
+            "content": chunk,
+            "type": meta.get("type", "memory"),
+            "concepts": meta.get("concepts", []),
+            "entities": meta.get("entities", []),
+            "emotional_weight": float(meta.get("emotional_weight", 0.5)),
+            "summary": meta.get("summary", chunk[:80]),
+            "created_at": datetime.now(timezone.utc),
+            "agent_outputs": {},
+            "model_used": "import",
+        }
+        result = await thoughts_col.insert_one(doc)
+        tid = str(result.inserted_id)
+        await _upsert_embedding(tid, chunk, meta)
+        imported.append({"id": tid, "summary": meta.get("summary", chunk[:40])})
+    return {"imported": len(imported), "thoughts": imported}
+
+
+@app.get("/api/thoughts/{thought_id}/chat")
+async def get_chat_history(thought_id: str, _auth=Depends(_check_api_key)):
+    try:
+        ObjectId(thought_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid thought ID")
+    history = await db.chat_history.find(
+        {"thought_id": thought_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(100)
+    return {"history": history}
+
+
+@app.post("/api/thoughts/{thought_id}/chat")
+async def save_chat_message(thought_id: str, msg: ChatMessage, _auth=Depends(_check_api_key)):
+    try:
+        ObjectId(thought_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid thought ID")
+    await db.chat_history.insert_one({
+        "thought_id": thought_id,
+        "role": msg.role,
+        "text": msg.text,
+        "model": msg.model,
+        "agent": msg.agent,
+        "created_at": datetime.now(timezone.utc),
+    })
+    return {"saved": True}
+
+
+@app.post("/api/connections")
+async def create_connection(conn: ManualConnectionInput, _auth=Depends(_check_api_key)):
+    try:
+        ObjectId(conn.source)
+        ObjectId(conn.target)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid node ID")
+    if conn.source == conn.target:
+        raise HTTPException(status_code=400, detail="Cannot connect node to itself")
+    doc = {
+        "source": conn.source,
+        "target": conn.target,
+        "relationship": conn.relationship or "manual connection",
+        "strength": 1.0,
+        "manual": True,
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = await connections_col.insert_one(doc)
+    return {"id": str(result.inserted_id), "source": conn.source, "target": conn.target}
+
+
+@app.delete("/api/connections/{connection_id}")
+async def delete_connection(connection_id: str, _auth=Depends(_check_api_key)):
+    try:
+        oid = ObjectId(connection_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid connection ID")
+    await connections_col.delete_one({"_id": oid})
+    return {"deleted": connection_id}
 
 
 @app.delete("/api/thoughts/{thought_id}")

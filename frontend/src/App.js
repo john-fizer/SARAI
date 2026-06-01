@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, Clock, Network, Volume2, VolumeX, RefreshCw, Cpu } from "lucide-react";
+import { Activity, Clock, Network, Volume2, VolumeX, RefreshCw, Cpu, Upload } from "lucide-react";
 import "./index.css";
 import { useGraphData } from "./hooks/useGraphData";
 import ParallaxBackground from "./components/ParallaxBackground";
@@ -15,6 +15,7 @@ import SimulationPanel from "./components/SimulationPanel";
 import PlanPanel from "./components/PlanPanel";
 import PredictPanel from "./components/PredictPanel";
 import JarvisVoice from "./components/JarvisVoice";
+import ImportModal from "./components/ImportModal";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const API_HEADERS = { "X-API-Key": process.env.REACT_APP_API_KEY || "" };
@@ -53,6 +54,7 @@ export default function App() {
   const ttsEnabledRef = useRef(ttsEnabled);
   const [pathNodeIds, setPathNodeIds] = useState([]);
   const [clusterMap, setClusterMap] = useState({});
+  const [showImport, setShowImport] = useState(false);
 
   // Keep ref in sync so handleThoughtAdded closure always reads latest value
   const handleTtsToggle = useCallback(() => {
@@ -202,6 +204,24 @@ export default function App() {
     finally { setIsImproving(false); }
   }, [isImproving]);
 
+  const handleUpdateNode = useCallback((updated) => {
+    setSelectedNode((prev) => prev?.id === updated.id ? { ...prev, ...updated } : prev);
+    fetchGraph();
+  }, [fetchGraph]);
+
+  const handleCreateConnection = useCallback(async (sourceId, targetId) => {
+    try {
+      await fetch(`${BACKEND}/api/connections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...API_HEADERS },
+        body: JSON.stringify({ source: sourceId, target: targetId, relationship: "manual" }),
+      });
+      await fetchGraph();
+    } catch (err) {
+      devLog("createConnection error:", err);
+    }
+  }, [fetchGraph]);
+
   const handleTimelineSelect = useCallback((entry) => {
     const node = nodes.find((n) => n.id === entry.id);
     if (node) setSelectedNode(node);
@@ -218,6 +238,12 @@ export default function App() {
       data-testid="app-root"
     >
       <ParallaxBackground />
+      {showImport && (
+        <ImportModal
+          onClose={() => setShowImport(false)}
+          onImported={() => { setShowImport(false); refreshAll(); }}
+        />
+      )}
       <SimulationPanel
         scenarios={simulationResult}
         thought={simulationThought}
@@ -252,7 +278,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-6" data-testid="stats-row">
+          <div className="hidden sm:flex items-center gap-6" data-testid="stats-row">
             <StatPill icon={<Network size={11} />} label="Nodes" value={stats.total_thoughts} color="#06B6D4" testId="stat-nodes" />
             <StatPill icon={<Activity size={11} />} label="Synapses" value={stats.total_connections} color="#3B82F6" testId="stat-synapses" />
             <StatPill
@@ -266,6 +292,16 @@ export default function App() {
 
           <div className="flex items-center gap-3">
             <SearchBar onSelectNode={handleNodeSelect} nodes={nodes} />
+            <motion.button
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setShowImport(true)}
+              data-testid="import-btn"
+              className="p-2 rounded-lg border border-[#1E293B] text-[#334155] hover:border-[#06B6D4]/40 hover:text-[#06B6D4] transition-all duration-200"
+              title="Bulk Import Thoughts"
+            >
+              <Upload size={14} />
+            </motion.button>
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
@@ -300,12 +336,12 @@ export default function App() {
         </motion.header>
 
         {/* MAIN LAYOUT */}
-        <div className="flex flex-1 overflow-hidden gap-0">
+        <div className="flex flex-1 overflow-hidden gap-0 flex-col md:flex-row">
 
           {/* LEFT PANEL */}
           <motion.aside
             {...LEFT_PANEL_ANIM}
-            className="w-64 shrink-0 flex flex-col glass-panel border-y-0 border-l-0"
+            className="hidden md:flex w-64 shrink-0 flex-col glass-panel border-y-0 border-l-0"
             style={{ borderRightColor: "rgba(6, 182, 212, 0.1)" }}
             data-testid="left-panel"
           >
@@ -355,7 +391,7 @@ export default function App() {
           </motion.aside>
 
           {/* CENTER — Neural Graph */}
-          <motion.main {...CENTER_ANIM} className="flex-1 relative overflow-hidden" data-testid="graph-main">
+          <motion.main {...CENTER_ANIM} className="flex-1 relative overflow-hidden min-h-[40vh] md:min-h-0" data-testid="graph-main">
             <NeuralGraph
               nodes={nodes}
               links={links}
@@ -364,6 +400,7 @@ export default function App() {
               activeNodeId={activeNodeId}
               pathNodeIds={pathNodeIds}
               clusterMap={clusterMap}
+              onCreateConnection={handleCreateConnection}
             />
 
             <AnimatePresence>
@@ -389,7 +426,7 @@ export default function App() {
           {/* RIGHT PANEL */}
           <motion.aside
             {...RIGHT_PANEL_ANIM}
-            className="w-72 shrink-0 glass-panel border-y-0 border-r-0 p-3 overflow-hidden"
+            className="w-full md:w-72 shrink-0 glass-panel border-y-0 border-r-0 p-3 overflow-hidden md:max-h-full max-h-64"
             style={{ borderLeftColor: "rgba(6, 182, 212, 0.1)" }}
             data-testid="right-panel"
           >
@@ -409,6 +446,7 @@ export default function App() {
                   onPredict={handlePredict}
                   onFindPath={(pathIds) => { setPathNodeIds(pathIds); setTimeout(() => setPathNodeIds([]), 8000); }}
                   allNodes={nodes}
+                  onUpdate={handleUpdateNode}
                 />
               ) : (
                 <motion.div
